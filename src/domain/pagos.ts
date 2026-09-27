@@ -104,3 +104,20 @@ export function deshacerPagos(
   if (montoPagado.isNeg()) throw new Error("Los movimientos suman más de lo pagado en la cuota");
   return { montoPagado, estado: estadoCuota({ ...c, montoPagado }, hoy) };
 }
+
+/**
+ * Ajusta lo pagado de una cuota cuando se edita o se borra un movimiento
+ * vinculado: resta el monto viejo y suma el nuevo (0 si se borra), y
+ * recalcula el estado según hoy.
+ */
+export function ajustarPagoCuota(
+  c: CuotaPagable,
+  montoAnterior: Decimal.Value,
+  montoNuevo: Decimal.Value,
+  hoy: Fecha,
+): { montoPagado: Decimal; estado: EstadoCuota } {
+  const montoPagado = new Decimal(c.montoPagado).sub(montoAnterior).add(montoNuevo);
+  if (montoPagado.isNeg()) throw new Error("Lo pagado de la cuota no puede quedar negativo");
+  if (montoPagado.gt(totalCuota(c))) throw new Error("El monto supera lo que falta pagar de la cuota");
+  return { montoPagado, estado: estadoCuota({ ...c, montoPagado }, hoy) };
+}

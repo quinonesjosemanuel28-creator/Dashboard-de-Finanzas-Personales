@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ajustarPagoCuota,
   aplicarPago,
   capitalPendiente,
   deshacerPagos,
@@ -92,5 +93,23 @@ describe("deshacerPagos", () => {
 
   it("rechaza movimientos que suman más de lo pagado", () => {
     expect(() => deshacerPagos(pagada, ["500"], "2026-11-10")).toThrow();
+  });
+});
+
+describe("ajustarPagoCuota (editar o borrar un movimiento vinculado)", () => {
+  const cuota = { interes: "400", capital: "0", montoPagado: "400", fechaVencimiento: "2026-11-15" };
+
+  it("borrar el movimiento vuelve la cuota a pendiente o vencida", () => {
+    expect(ajustarPagoCuota(cuota, "400", "0", "2026-11-10").estado).toBe("PENDIENTE");
+    expect(ajustarPagoCuota(cuota, "400", "0", "2026-11-20").estado).toBe("VENCIDA");
+  });
+
+  it("editar el monto recalcula lo pagado y el estado", () => {
+    const r = ajustarPagoCuota(cuota, "400", "250", "2026-11-10");
+    expect([r.montoPagado.toString(), r.estado]).toEqual(["250", "PARCIAL"]);
+  });
+
+  it("no deja pasar más que el total de la cuota", () => {
+    expect(() => ajustarPagoCuota(cuota, "400", "450", "2026-11-10")).toThrow();
   });
 });
