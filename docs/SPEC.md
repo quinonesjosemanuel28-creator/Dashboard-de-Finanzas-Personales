@@ -32,7 +32,7 @@
 4. **Moneda original + conversión.** Cada movimiento se guarda en su moneda original con el tipo de cambio del día. Los reportes se pueden ver en ARS o en USD.
 5. **Tasas siempre mensuales.** Se guardan como tasa mensual simple (0.04 = 4%). La TNA (×12) y la TEA son solo de visualización.
 6. **Lógica de dominio pura y testeada.** Cronogramas, fechas de pago, estado de resultados, balance y spread viven en funciones puras con tests.
-7. **Nada se borra en duro si tiene historia.** Activos, pasivos y cuentas se archivan. Los movimientos sí se pueden borrar o editar mientras el mes no esté cerrado.
+7. **Nada se borra en duro si tiene historia.** Activos, pasivos y cuentas con movimientos se archivan. Un pasivo o una cuenta **sin movimientos** (cargado por error) se puede eliminar, con confirmación. Los movimientos sí se pueden borrar o editar mientras el mes no esté cerrado.
 8. **Todo el copy de la UI en español rioplatense (voseo).**
 
 ---
@@ -282,6 +282,7 @@ model Activo {
   contraparte                Contraparte?       @relation(fields: [contraparteId], references: [id])
   moneda                     Moneda
   capitalInicial             Decimal            @db.Decimal(18, 2)
+  capitalInicialRegistrado   Boolean            @default(false) // el capital inicial salió de una cuenta (APLICACION_ACTIVO)
   fechaInicio                DateTime           @db.Date
   fechaFin                   DateTime?          @db.Date // RENTA_PROGRAMADA: fecha de vencimiento del contrato
   // RENTA_PROGRAMADA
@@ -302,6 +303,7 @@ model Activo {
   notas                      String?
   cuotas                     CuotaActivo[]
   registrosCartera           RegistroCartera[]
+  valuaciones                Valuacion[]
   movimientos                Movimiento[]
   fondeos                    Fondeo[]
   createdAt                  DateTime           @default(now())
@@ -323,6 +325,18 @@ model CuotaActivo {
   movimientos      Movimiento[]
 
   @@unique([activoId, numero])
+}
+
+// Historial de valuaciones de un activo TENENCIA (los revalúos van a la conciliación patrimonial).
+model Valuacion {
+  id        String   @id @default(cuid())
+  activoId  String
+  activo    Activo   @relation(fields: [activoId], references: [id], onDelete: Cascade)
+  fecha     DateTime @db.Date
+  valor     Decimal  @db.Decimal(18, 2)
+  createdAt DateTime @default(now())
+
+  @@index([activoId, fecha])
 }
 
 model RegistroCartera {
@@ -437,6 +451,9 @@ model Movimiento {
 
   @@index([fecha])
   @@index([tipo, fecha])
+  @@index([cuentaId])
+  @@index([activoId])
+  @@index([pasivoId])
 }
 
 model TipoCambio {
@@ -475,7 +492,9 @@ model Configuracion {
 - `diaPago` es un entero entre 1 y 31. Por defecto, el día de `fechaInicio`. En `Activo` es obligatorio si el comportamiento es `RENTA_PROGRAMADA`.
 - `fechaVencimiento` (pasivos) y `fechaFin` (activos `RENTA_PROGRAMADA`) tienen que ser posteriores a la anteúltima fecha de pago del cronograma.
 - La suma de fondeos vigentes de un pasivo no puede superar su capital pendiente.
+- La cuenta de un movimiento vinculado a un activo o pasivo tiene que estar en la moneda de ese activo o pasivo.
 - No se pueden crear, editar ni borrar movimientos con fecha dentro de un período cerrado sin reabrir el cierre (acción explícita con confirmación).
+- **Eliminar vs. archivar**: un pasivo se puede eliminar solo si no tiene movimientos vinculados (directos o a través de sus cuotas) ni fondeos; se borra con su cronograma. Una cuenta, solo si no tiene movimientos (como origen o destino). En cualquier otro caso se archiva. Las cuotas marcadas con "pagadas hasta" no cuentan como movimientos. Lógica en `domain/borrado.ts`.
 
 ---
 
@@ -486,6 +505,7 @@ model Configuracion {
 - Histórico para la carga inicial: ArgentinaDatos (verificar el endpoint de cotizaciones históricas del dólar oficial).
 - Si no hay TC para una fecha (fin de semana o feriado), se usa el último TC disponible anterior a esa fecha.
 - Se permite override manual (queda `manual = true`).
+- Si al registrar un movimiento con fecha de hoy todavía no hay TC de hoy, se consulta dolarapi en ese momento (además del cron diario).
 - Conversión: `USD = ARS / TC` y `ARS = USD × TC`.
 - Si el último TC tiene más de 4 días corridos sin actualizar, el dashboard muestra una alerta.
 
@@ -529,6 +549,7 @@ Todo lo anterior aplica igual a los activos `RENTA_PROGRAMADA` (`fechaFin` hace 
 - Pago parcial deja la cuota en `PARCIAL`; pago total, en `PAGADA`.
 - En pasivos con cuota vencida, se muestra el **punitorio estimado** = `interesImpago × punitorioMensual × díasDeAtraso / 30`. El punitorio corre desde el día siguiente a la fecha de pago (ese día es el día 1 de atraso). Lo pagado de una cuota se aplica primero al interés. Si se paga, se registra como `GASTO` con categoría "Punitorios" (grupo `COSTO_FINANCIERO_OTRO`).
 - Registrar el pago o cobro desde la cuota crea el `Movimiento` vinculado con un solo tap, prellenado con el monto pendiente, la cuenta por defecto de esa moneda y la fecha de hoy.
+- **Deshacer pago**: en una cuota con pagos registrados desde la app, borra sus movimientos vinculados (interés y capital, y todos los pagos parciales), resta esos montos de `montoPagado` y recalcula el estado según hoy (`PENDIENTE`, `PARCIAL` o `VENCIDA`). Pide confirmación. Si el pasivo estaba `CANCELADO`, vuelve a `VIGENTE`. No aplica a las cuotas marcadas con "pagadas hasta", que no tienen movimientos. Cuando exista el cierre mensual (Fase 2), no se podrá deshacer un pago de un mes cerrado sin reabrirlo.
 
 ### 5.5 Preaviso de retiro
 - Se registra `fechaPreaviso` y `montoPreaviso`, y el pasivo pasa a `EN_PREAVISO`.
@@ -545,7 +566,13 @@ Todo lo anterior aplica igual a los activos `RENTA_PROGRAMADA` (`fechaFin` hace 
 | `COMPRAVENTA` | Compra (`APLICACION_ACTIVO`) + gastos directos (`GASTO` con `activoId`, que **se capitalizan**) + venta | Costo total (compra + gastos) mientras está en stock | Al vender: `ganancia = precioVenta − costoTotal`. El registro de la venta genera automáticamente `COBRO_CAPITAL` (costo) + `COBRO_RENDIMIENTO` (ganancia). Si hay pérdida, va a Pérdidas |
 | `TENENCIA` | Compra + valuaciones periódicas | `valuacionActual` | Los revalúos no pasan por el ER: van a "Revalúos" en la conciliación patrimonial. Las rentas cobradas (alquiler, dividendo) sí van al ER como `COBRO_RENDIMIENTO` |
 
-- Pasar un activo a `INCOBRABLE` genera un `BAJA_INCOBRABLE` por el capital pendiente, que impacta Pérdidas en el ER de ese mes.
+- Pasar un activo a `INCOBRABLE` genera un `BAJA_INCOBRABLE` por el capital pendiente, que impacta Pérdidas en el ER de ese mes. Solo aplica a `RENTA_PROGRAMADA` y `CARTERA`. Borrar ese movimiento vuelve el activo a `ACTIVO`.
+- **Capital inicial y movimientos**: al dar de alta un activo se puede registrar la salida del capital desde una cuenta (`APLICACION_ACTIVO` en la fecha de inicio, y `capitalInicialRegistrado = true`). Si el activo ya existía antes de usar la app, no se registra movimiento y el capital inicial cuenta como base del valor. Así no se cuenta dos veces.
+- **Venta con pérdida** (`COMPRAVENTA`): entra `COBRO_CAPITAL` por el precio de venta y la diferencia con el costo se registra como `BAJA_INCOBRABLE` (sin cuenta), que va a Pérdidas. La venta se puede deshacer desde el activo ("Deshacer venta"): borra los movimientos de la venta y el activo vuelve a estar en stock. Esos movimientos no se editan ni se borran sueltos.
+- **Tenencias**: cada valuación queda en el historial (`Valuacion`); `valuacionActual` es la más reciente. Los revalúos se leen de ese historial en la conciliación patrimonial.
+- **Carteras**: la foto mensual (capital en la calle, mora, clientes) se carga en `RegistroCartera`, desde el detalle o en el cierre de mes.
+- **Cobro de cuotas** (`RENTA_PROGRAMADA`): igual que el pago de cuotas de pasivos (§5.4), con "Cobrar" en 2 taps (`COBRO_RENDIMIENTO` por el interés y `COBRO_CAPITAL` por el capital) y "Deshacer cobro" para las cuotas cobradas desde la app. Cuando se cobran todas, el activo pasa a `CERRADO`.
+- **Eliminar vs. archivar**: igual que pasivos y cuentas (§4). Un activo sin movimientos ni fondeos se puede eliminar; si tiene, se archiva.
 
 Tipos de activo del seed (el usuario puede crear más):
 
@@ -725,7 +752,7 @@ Objetivo: **4 taps + monto**.
   - costo acumulado y botón "Registrar venta" (COMPRAVENTA);
   - valuaciones (TENENCIA).
 - Además: fondeos asignados y movimientos.
-- Alta en wizard: tipo → datos → (cronograma: vista previa editable) → fondeo opcional.
+- Alta en wizard: tipo → datos → (cronograma: vista previa editable, con "cuotas cobradas hasta") → confirmar. El fondeo se asigna en la Fase 3.
 
 ### 8.3 Pasivos (inversores)
 - Lista con inversor, moneda, capital, tasa, próximo vencimiento y badges `SOCIEDAD` y `EN_PREAVISO`.
@@ -738,7 +765,9 @@ Objetivo: **4 taps + monto**.
 
 ### 8.4 Movimientos
 - Listado con filtros (mes, tipo, cuenta, categoría, activo, pasivo, moneda) y búsqueda.
-- Swipe para editar o borrar (bloqueado en meses cerrados).
+- Tocar un movimiento abre su edición (fecha, monto, cuenta, categoría, descripción) y el botón de borrar. El tipo y los vínculos no se editan. Bloqueado en meses cerrados (Fase 2).
+- Editar el monto o borrar un movimiento vinculado a una cuota recalcula la cuota (lo pagado − monto anterior + monto nuevo) y su estado, y el estado del pasivo o activo (`CANCELADO`/`CERRADO` ↔ vigente).
+- Si cambia la fecha, se toma el TC vigente de la nueva fecha.
 
 ### 8.5 Reportes
 - Estado de resultados, Flujo de caja, Balance y Conciliación patrimonial.
@@ -766,7 +795,7 @@ Primer uso, en este orden:
 3. activos vigentes;
 4. fondeos.
 
-Permite ingresar un mutuo con fecha de inicio pasada y marcar en bloque "cuotas pagadas hasta YYYY-MM".
+Permite ingresar un mutuo con fecha de inicio pasada y marcar en bloque "cuotas pagadas hasta YYYY-MM". Las cuotas marcadas así quedan `PAGADA` **sin generar movimientos**, porque los saldos iniciales de las cuentas ya reflejan esos pagos. En un mutuo en curso tampoco se registra la entrada del capital.
 
 ---
 

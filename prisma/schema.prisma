@@ -159,6 +159,7 @@ model Activo {
   contraparte                Contraparte?       @relation(fields: [contraparteId], references: [id])
   moneda                     Moneda
   capitalInicial             Decimal            @db.Decimal(18, 2)
+  capitalInicialRegistrado   Boolean            @default(false) // el capital inicial salió de una cuenta (APLICACION_ACTIVO)
   fechaInicio                DateTime           @db.Date
   fechaFin                   DateTime?          @db.Date // RENTA_PROGRAMADA: fecha de vencimiento del contrato
   // RENTA_PROGRAMADA
@@ -179,6 +180,7 @@ model Activo {
   notas                      String?
   cuotas                     CuotaActivo[]
   registrosCartera           RegistroCartera[]
+  valuaciones                Valuacion[]
   movimientos                Movimiento[]
   fondeos                    Fondeo[]
   createdAt                  DateTime           @default(now())
@@ -200,6 +202,18 @@ model CuotaActivo {
   movimientos      Movimiento[]
 
   @@unique([activoId, numero])
+}
+
+// Historial de valuaciones de un activo TENENCIA (los revalúos van a la conciliación patrimonial).
+model Valuacion {
+  id        String   @id @default(cuid())
+  activoId  String
+  activo    Activo   @relation(fields: [activoId], references: [id], onDelete: Cascade)
+  fecha     DateTime @db.Date
+  valor     Decimal  @db.Decimal(18, 2)
+  createdAt DateTime @default(now())
+
+  @@index([activoId, fecha])
 }
 
 model RegistroCartera {
@@ -314,6 +328,9 @@ model Movimiento {
 
   @@index([fecha])
   @@index([tipo, fecha])
+  @@index([cuentaId])
+  @@index([activoId])
+  @@index([pasivoId])
 }
 
 model TipoCambio {
