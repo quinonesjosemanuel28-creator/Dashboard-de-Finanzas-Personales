@@ -3,7 +3,7 @@
  */
 
 import { Decimal, redondear2 } from "./decimal";
-import { type Fecha, diasEntre } from "./fechas";
+import { type Fecha, compararFechas, diasEntre } from "./fechas";
 
 export type Moneda = "ARS" | "USD";
 
@@ -23,4 +23,18 @@ export function convertir(monto: Decimal.Value, de: Moneda, a: Moneda, tc: Decim
 export function tcDesactualizado(fechaUltimoTC: Fecha | null, hoy: Fecha): boolean {
   if (fechaUltimoTC === null) return true;
   return diasEntre(fechaUltimoTC, hoy) > MAX_DIAS_TC_SIN_ACTUALIZAR;
+}
+
+/**
+ * TC vigente para una fecha: el de esa fecha o, si no hay (fin de semana,
+ * feriado), el último disponible anterior. `null` si no hay ninguno anterior.
+ */
+export function tcVigente<T extends { fecha: Fecha }>(tcs: T[], fecha: Fecha): T | null {
+  let mejor: T | null = null;
+  for (const tc of tcs) {
+    if (compararFechas(tc.fecha, fecha) <= 0 && (mejor === null || compararFechas(tc.fecha, mejor.fecha) > 0)) {
+      mejor = tc;
+    }
+  }
+  return mejor;
 }
