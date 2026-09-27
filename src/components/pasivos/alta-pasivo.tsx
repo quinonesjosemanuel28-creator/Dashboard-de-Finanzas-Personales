@@ -2,26 +2,33 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Check } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
+import { EditorCuotas } from "@/components/cronograma/editor-cuotas";
+import {
+  type CuotaEditable,
+  aEditable,
+  cuotasParaEnviar,
+  esFechaValida,
+  totalInteres,
+  validarCuotas,
+} from "@/components/cronograma/cuotas-editables";
 import { Campo } from "@/components/formulario";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  type CuotaPropuesta,
   type EsquemaCronograma,
   type FrecuenciaPago,
   diaPagoPorDefecto,
   fechaVencimientoSugerida,
   generarCronograma,
 } from "@/domain/cronograma";
-import { CERO, Decimal } from "@/domain/decimal";
-import { parseFecha, periodoDe } from "@/domain/fechas";
+import { Decimal } from "@/domain/decimal";
+import { periodoDe } from "@/domain/fechas";
 import type { Moneda } from "@/domain/fx";
-import { formatMonto, formatNumero, formatTasa } from "@/lib/dinero";
+import { formatMonto, formatTasa } from "@/lib/dinero";
 import { parseNumeroAR, parsePorcentajeAR } from "@/lib/entrada";
 import { ESQUEMAS, FRECUENCIAS, TIPOS_PASIVO, formatFechaMedia } from "@/lib/etiquetas";
 import { cn } from "@/lib/utils";
@@ -36,37 +43,7 @@ interface CuentaOpcion extends Opcion {
   moneda: Moneda;
 }
 
-/** Cuota del cronograma con los montos como texto editable (es-AR). */
-interface CuotaEditable {
-  numero: number;
-  fechaVencimiento: string;
-  periodoDesde: string;
-  mesesCubiertos: number;
-  interes: string;
-  capital: string;
-}
-
 const PASOS = ["Inversor", "Condiciones", "Cronograma", "Confirmar"] as const;
-
-function aEditable(c: CuotaPropuesta): CuotaEditable {
-  return {
-    numero: c.numero,
-    fechaVencimiento: c.fechaVencimiento,
-    periodoDesde: c.periodoDesde,
-    mesesCubiertos: c.mesesCubiertos,
-    interes: formatNumero(c.interes),
-    capital: formatNumero(c.capital),
-  };
-}
-
-function esFechaValida(f: string): boolean {
-  try {
-    parseFecha(f);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export function AltaPasivo({
   inversores,
@@ -176,32 +153,15 @@ export function AltaPasivo({
       }
     }
     if (paso === 2) {
-      const e2 = validarCuotas();
+      const e2 = validarCronograma();
       if (e2) return setError(e2);
     }
     setPaso(paso + 1);
     window.scrollTo({ top: 0 });
   }
 
-  function cuotasParseadas() {
-    return cuotas.map((c) => ({
-      ...c,
-      interes: parseNumeroAR(c.interes),
-      capital: parseNumeroAR(c.capital),
-    }));
-  }
-
-  function validarCuotas(): string | null {
-    const parseadas = cuotasParseadas();
-    for (const c of parseadas) {
-      if (c.interes === null || c.capital === null) return `Revisá los montos de la cuota ${c.numero}.`;
-      if (!esFechaValida(c.fechaVencimiento)) return `Revisá la fecha de la cuota ${c.numero}.`;
-    }
-    const totalCapital = parseadas.reduce((s, c) => s.add(c.capital!), CERO);
-    if (!totalCapital.eq(capitalNum!)) {
-      return `Las cuotas devuelven ${formatMonto(totalCapital, moneda)} de capital y el pasivo es de ${formatMonto(capitalNum!, moneda)}.`;
-    }
-    return null;
+  function validarCronograma(): string | null {
+    return validarCuotas(cuotas, new Decimal(capitalNum!).toFixed(2), moneda);
   }
 
   function editarCuota(i: number, campo: "fechaVencimiento" | "interes" | "capital", valor: string) {
@@ -222,14 +182,7 @@ export function AltaPasivo({
       penalidadRetiroPct: penalidad.trim() === "" ? null : parsePorcentajeAR(penalidad),
       punitorioMensual: punitorio.trim() === "" ? null : parsePorcentajeAR(punitorio),
       notas: notas.trim() || null,
-      cuotas: cuotasParseadas().map((c) => ({
-        numero: c.numero,
-        fechaVencimiento: c.fechaVencimiento,
-        periodoDesde: c.periodoDesde,
-        mesesCubiertos: c.mesesCubiertos,
-        interes: new Decimal(c.interes!).toFixed(2),
-        capital: new Decimal(c.capital!).toFixed(2),
-      })),
+      cuotas: cuotasParaEnviar(cuotas),
       pagadasHasta: enCurso ? pagadasHasta : null,
       ingresoCapitalCuentaId: conIngreso ? cuentaIngresoFinal : null,
     };
@@ -246,7 +199,7 @@ export function AltaPasivo({
   }
 
   const pagadasPreview = (c: CuotaEditable) => enCurso && periodoDe(c.fechaVencimiento) <= pagadasHasta;
-  const totalInteres = cuotasParseadas().reduce((s, c) => (c.interes ? s.add(c.interes) : s), CERO);
+  const interesTotal = totalInteres(cuotas);
 
   return (
     <div className="flex flex-col gap-4">
@@ -443,35 +396,7 @@ export function AltaPasivo({
             )}
           </Card>
 
-          <ul className="flex flex-col gap-2">
-            {cuotas.map((c, i) => (
-              <li key={c.numero} className={cn("bg-card flex flex-col gap-2 rounded-xl border p-3", pagadasPreview(c) && "opacity-70")}>
-                <div className="flex items-center justify-between gap-2 text-sm">
-                  <span className="font-medium">
-                    Cuota {c.numero}
-                    {c.mesesCubiertos === 0 ? " · Capital" : c.mesesCubiertos > 1 ? ` · ${c.mesesCubiertos} meses` : ""}
-                  </span>
-                  {pagadasPreview(c) && <Badge variant="positivo"><Check className="size-3" /> Pagada</Badge>}
-                </div>
-                <Input
-                  type="date"
-                  aria-label={`Fecha de la cuota ${c.numero}`}
-                  value={c.fechaVencimiento}
-                  onChange={(e) => editarCuota(i, "fechaVencimiento", e.target.value)}
-                />
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="flex flex-col gap-1 text-xs">
-                    <span className="text-muted-foreground">Interés ({moneda})</span>
-                    <Input inputMode="decimal" value={c.interes} onChange={(e) => editarCuota(i, "interes", e.target.value)} />
-                  </label>
-                  <label className="flex flex-col gap-1 text-xs">
-                    <span className="text-muted-foreground">Capital ({moneda})</span>
-                    <Input inputMode="decimal" value={c.capital} onChange={(e) => editarCuota(i, "capital", e.target.value)} />
-                  </label>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <EditorCuotas cuotas={cuotas} moneda={moneda} onEditar={editarCuota} marcada={pagadasPreview} />
         </div>
       )}
 
@@ -484,7 +409,7 @@ export function AltaPasivo({
           <Fila etiqueta="Inicio" valor={formatFechaMedia(fechaInicio)} />
           <Fila etiqueta="Vencimiento" valor={formatFechaMedia(vencimientoFinal)} />
           <Fila etiqueta="Día de pago" valor={diaPago} />
-          <Fila etiqueta="Cuotas" valor={`${cuotas.length} · interés total ${formatMonto(totalInteres, moneda)}`} />
+          <Fila etiqueta="Cuotas" valor={`${cuotas.length} · interés total ${formatMonto(interesTotal, moneda)}`} />
           {enCurso && <Fila etiqueta="Pagadas hasta" valor={pagadasHasta} />}
           {conIngreso && <Fila etiqueta="Entrada del capital" valor={cuentasMoneda.find((c) => c.id === cuentaIngresoFinal)?.nombre ?? ""} />}
           {instrumentacion === "SOCIEDAD" && (
