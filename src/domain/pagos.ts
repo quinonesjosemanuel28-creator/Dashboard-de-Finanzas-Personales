@@ -69,3 +69,19 @@ export function marcarPagadasHasta<T extends CuotaPagable>(
     };
   });
 }
+
+/** Parte de capital ya pagada de una cuota (lo pagado va primero al interés). */
+export function capitalPagadoCuota(c: Pick<CuotaPagable, "interes" | "capital" | "montoPagado">): Decimal {
+  const sobreInteres = new Decimal(c.montoPagado).sub(c.interes);
+  if (sobreInteres.lte(0)) return CERO;
+  return Decimal.min(sobreInteres, new Decimal(c.capital));
+}
+
+/** Capital todavía no devuelto de un pasivo (o no cobrado de un activo). */
+export function capitalPendiente(
+  capital: Decimal.Value,
+  cuotas: Pick<CuotaPagable, "interes" | "capital" | "montoPagado">[],
+): Decimal {
+  const pagado = cuotas.reduce((s, c) => s.add(capitalPagadoCuota(c)), CERO);
+  return Decimal.max(CERO, new Decimal(capital).sub(pagado));
+}

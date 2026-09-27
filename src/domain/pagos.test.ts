@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aplicarPago, marcarPagadasHasta, pendienteCuota, repartirPago } from "./pagos";
+import { aplicarPago, capitalPendiente, marcarPagadasHasta, pendienteCuota, repartirPago } from "./pagos";
 
 const cuota = { interes: "400", capital: "1000", montoPagado: "0", fechaVencimiento: "2026-11-15" };
 
@@ -46,5 +46,17 @@ describe("marcarPagadasHasta", () => {
       "VENCIDA",
       "PENDIENTE",
     ]);
+  });
+});
+
+describe("capitalPendiente", () => {
+  it("descuenta solo lo pagado por encima del interés", () => {
+    const cuotas = [
+      { interes: "400", capital: "0", montoPagado: "400" },
+      { interes: "0", capital: "10000", montoPagado: "2500" },
+      { interes: "400", capital: "1000", montoPagado: "600" },
+    ];
+    expect(capitalPendiente("11000", cuotas).toString()).toBe("8300");
+    expect(capitalPendiente("11000", []).toString()).toBe("11000");
   });
 });
