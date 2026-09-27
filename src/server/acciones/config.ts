@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { evaluarEliminacion } from "@/domain/borrado";
 import { db } from "@/server/db";
 import { aFechaDb } from "@/server/fechas-db";
 import { requireSession } from "@/server/sesion";
@@ -55,6 +56,17 @@ export async function archivarCuenta(id: string, archivar: boolean): Promise<voi
   await requireSession();
   await db.cuenta.update({ where: { id }, data: { archivada: archivar } });
   revalidatePath("/config/cuentas");
+}
+
+/** Solo para lo cargado por error: una cuenta sin movimientos. Si no, se archiva. */
+export async function eliminarCuenta(id: string): Promise<ResultadoAccion> {
+  await requireSession();
+  const movimientos = await db.movimiento.count({ where: { OR: [{ cuentaId: id }, { cuentaDestinoId: id }] } });
+  const evaluacion = evaluarEliminacion({ movimientos });
+  if (!evaluacion.permitido) return { ok: false, error: evaluacion.motivo };
+  await db.cuenta.delete({ where: { id } });
+  revalidatePath("/config/cuentas");
+  redirect("/config/cuentas");
 }
 
 // ---------------------------------------------------------------- Categorías

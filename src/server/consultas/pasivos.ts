@@ -2,6 +2,7 @@ import "server-only";
 import { type EstadoCuota, estadoCuota, punitorioEstimado } from "@/domain/cuotas";
 import { Decimal } from "@/domain/decimal";
 import type { Moneda } from "@/domain/fx";
+import { evaluarEliminacion } from "@/domain/borrado";
 import { capitalPendiente, pendienteCuota } from "@/domain/pagos";
 import { hoy } from "@/lib/hoy";
 import { db } from "@/server/db";
@@ -87,18 +88,32 @@ export async function listarPasivos(incluirArchivados: boolean) {
   });
 }
 
+/** Movimientos vinculados al pasivo, directo o a través de sus cuotas. */
+export function contarMovimientosPasivo(pasivoId: string) {
+  return db.movimiento.count({ where: { OR: [{ pasivoId }, { cuotaPasivo: { pasivoId } }] } });
+}
+
 export async function obtenerPasivo(id: string) {
   const fechaHoy = hoy();
   const p = await db.pasivo.findUnique({
     where: { id },
     include: {
       contraparte: true,
-      cuotas: { orderBy: [{ fechaVencimiento: "asc" }, { numero: "asc" }] },
+      cuotas: {
+        orderBy: [{ fechaVencimiento: "asc" }, { numero: "asc" }],
+        include: { _count: { select: { movimientos: true } } },
+      },
       movimientos: { orderBy: [{ fecha: "desc" }, { createdAt: "desc" }], take: 20, include: { cuenta: true } },
+      _count: { select: { fondeos: true } },
     },
   });
   if (!p) return null;
-  const cuotas = p.cuotas.map((c) => aVista(c, p.punitorioMensual?.toString() ?? null, fechaHoy));
+  const movimientosVinculados = await contarMovimientosPasivo(id);
+  const cuotas = p.cuotas.map((c) => ({
+    ...aVista(c, p.punitorioMensual?.toString() ?? null, fechaHoy),
+    /** Movimientos de pago registrados en la app (0 si se marcó con "pagadas hasta"). */
+    pagosRegistrados: c._count.movimientos,
+  }));
   return {
     id: p.id,
     nombre: p.nombre,
@@ -121,6 +136,7 @@ export async function obtenerPasivo(id: string) {
     punitorioMensual: p.punitorioMensual?.toString() ?? null,
     estado: p.estado,
     notas: p.notas,
+    eliminacion: evaluarEliminacion({ movimientos: movimientosVinculados, fondeos: p._count.fondeos }),
     cuotas,
     movimientos: p.movimientos.map((m) => ({
       id: m.id,

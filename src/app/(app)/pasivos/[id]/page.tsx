@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { BotonConfirmado } from "@/components/boton-confirmado";
 import { BotonArchivar } from "@/components/config/boton-archivar";
 import { EncabezadoPagina } from "@/components/encabezado-pagina";
 import { Monto } from "@/components/ocultar-montos";
@@ -11,7 +12,7 @@ import { Decimal, redondear2 } from "@/domain/decimal";
 import { formatTasa } from "@/lib/dinero";
 import { ESQUEMAS, ESTADOS_PASIVO, FRECUENCIAS, TIPOS_PASIVO, formatFechaMedia } from "@/lib/etiquetas";
 import { hoy } from "@/lib/hoy";
-import { archivarPasivo } from "@/server/acciones/pasivos";
+import { archivarPasivo, deshacerPago, eliminarPasivo } from "@/server/acciones/pasivos";
 import { cuentaPorDefecto, cuentasActivas } from "@/server/consultas/cuentas";
 import { obtenerPasivo } from "@/server/consultas/pasivos";
 import { requireSession } from "@/server/sesion";
@@ -93,6 +94,17 @@ export default async function PasivoPage({ params }: { params: Promise<{ id: str
                 {c.estado !== "PAGADA" && !archivado && (
                   <PagarCuota cuota={c} moneda={p.moneda} cuentas={cuentas} cuentaPorDefecto={cuentaDefecto} hoy={fechaHoy} />
                 )}
+                {c.pagosRegistrados > 0 && !archivado && (
+                  <BotonConfirmado
+                    variant="ghost"
+                    size="sm"
+                    className="text-muted-foreground h-8 px-2 text-xs"
+                    accion={deshacerPago.bind(null, c.id)}
+                    confirmacion={`¿Deshacés el pago de la cuota ${c.numero}? Se borra${c.pagosRegistrados === 1 ? " el movimiento" : `n los ${c.pagosRegistrados} movimientos`} y la cuota vuelve a quedar impaga.`}
+                  >
+                    Deshacer pago
+                  </BotonConfirmado>
+                )}
               </div>
             </li>
           ))}
@@ -120,6 +132,18 @@ export default async function PasivoPage({ params }: { params: Promise<{ id: str
       )}
 
       <BotonArchivar archivado={archivado} accion={archivarPasivo.bind(null, p.id)} cosa="este pasivo" />
+      {p.eliminacion.permitido ? (
+        <BotonConfirmado
+          variant="ghost"
+          className="text-negativo w-full"
+          accion={eliminarPasivo.bind(null, p.id)}
+          confirmacion="¿Eliminás este pasivo? Se borra con todo su cronograma y no se puede recuperar. Usalo solo si lo cargaste por error."
+        >
+          Eliminar (cargado por error)
+        </BotonConfirmado>
+      ) : (
+        <p className="text-muted-foreground text-center text-xs">{p.eliminacion.motivo}</p>
+      )}
     </section>
   );
 }

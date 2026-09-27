@@ -1,11 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { CERO, Decimal } from "@/domain/decimal";
 import { estadoCuota } from "@/domain/cuotas";
-import { marcarPagadasHasta, repartirPago, totalCuota } from "@/domain/pagos";
+import { evaluarEliminacion } from "@/domain/borrado";
+import { deshacerPagos, marcarPagadasHasta, repartirPago, totalCuota } from "@/domain/pagos";
 import { hoy } from "@/lib/hoy";
+import { contarMovimientosPasivo } from "@/server/consultas/pasivos";
 import { db } from "@/server/db";
 import { aFechaDb, deFechaDb } from "@/server/fechas-db";
 import { requireSession } from "@/server/sesion";
@@ -251,4 +254,67 @@ export async function archivarPasivo(id: string, archivar: boolean): Promise<voi
   await db.pasivo.update({ where: { id }, data: { estado } });
   revalidatePath("/pasivos");
   revalidatePath(`/pasivos/${id}`);
+}
+
+// ---------------------------------------------------------------- Deshacer pago
+
+/** Borra los movimientos de pago de la cuota y la vuelve a su estado según hoy. */
+export async function deshacerPago(cuotaId: string): Promise<ResultadoAccion> {
+  await requireSession();
+  const cuota = await db.cuotaPasivo.findUnique({
+    where: { id: cuotaId },
+    include: { pasivo: true, movimientos: { select: { id: true, monto: true } } },
+  });
+  if (!cuota) return { ok: false, error: "La cuota no existe." };
+
+  let resultado: ReturnType<typeof deshacerPagos>;
+  try {
+    resultado = deshacerPagos(
+      {
+        interes: cuota.interes.toString(),
+        capital: cuota.capital.toString(),
+        montoPagado: cuota.montoPagado.toString(),
+        fechaVencimiento: deFechaDb(cuota.fechaVencimiento),
+      },
+      cuota.movimientos.map((m) => m.monto.toString()),
+      hoy(),
+    );
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "No se pudo deshacer el pago." };
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.movimiento.deleteMany({ where: { id: { in: cuota.movimientos.map((m) => m.id) } } });
+    await tx.cuotaPasivo.update({
+      where: { id: cuota.id },
+      data: {
+        montoPagado: resultado.montoPagado.toFixed(2),
+        estado: resultado.estado,
+        fechaPago: resultado.estado === "PAGADA" ? cuota.fechaPago : null,
+      },
+    });
+    if (cuota.pasivo.estado === "CANCELADO" && resultado.estado !== "PAGADA") {
+      await tx.pasivo.update({ where: { id: cuota.pasivoId }, data: { estado: "VIGENTE" } });
+    }
+  });
+
+  revalidatePath(`/pasivos/${cuota.pasivoId}`);
+  revalidatePath("/pasivos");
+  return { ok: true, mensaje: "Pago deshecho." };
+}
+
+// ---------------------------------------------------------------- Eliminar
+
+/** Solo para lo cargado por error: sin movimientos ni fondeos. Si no, se archiva. */
+export async function eliminarPasivo(id: string): Promise<ResultadoAccion> {
+  await requireSession();
+  const [movimientos, fondeos] = await Promise.all([
+    contarMovimientosPasivo(id),
+    db.fondeo.count({ where: { pasivoId: id } }),
+  ]);
+  const evaluacion = evaluarEliminacion({ movimientos, fondeos });
+  if (!evaluacion.permitido) return { ok: false, error: evaluacion.motivo };
+  await db.pasivo.delete({ where: { id } }); // las cuotas se borran en cascada
+  revalidatePath("/pasivos");
+  redirect("/pasivos");
 }
