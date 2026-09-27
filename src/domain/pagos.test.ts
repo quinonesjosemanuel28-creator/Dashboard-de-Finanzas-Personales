@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { aplicarPago, capitalPendiente, marcarPagadasHasta, pendienteCuota, repartirPago } from "./pagos";
+import {
+  aplicarPago,
+  capitalPendiente,
+  deshacerPagos,
+  marcarPagadasHasta,
+  pendienteCuota,
+  repartirPago,
+} from "./pagos";
 
 const cuota = { interes: "400", capital: "1000", montoPagado: "0", fechaVencimiento: "2026-11-15" };
 
@@ -58,5 +65,32 @@ describe("capitalPendiente", () => {
     ];
     expect(capitalPendiente("11000", cuotas).toString()).toBe("8300");
     expect(capitalPendiente("11000", []).toString()).toBe("11000");
+  });
+});
+
+describe("deshacerPagos", () => {
+  const pagada = { interes: "400", capital: "0", montoPagado: "400", fechaVencimiento: "2026-11-15" };
+
+  it("vuelve la cuota a pendiente si todavía no venció", () => {
+    const r = deshacerPagos(pagada, ["400"], "2026-11-10");
+    expect([r.montoPagado.toString(), r.estado]).toEqual(["0", "PENDIENTE"]);
+  });
+
+  it("vuelve la cuota a vencida si ya pasó la fecha de pago", () => {
+    expect(deshacerPagos(pagada, ["400"], "2026-11-16").estado).toBe("VENCIDA");
+  });
+
+  it("deshace todos los movimientos de la cuota (interés + capital, o pagos parciales)", () => {
+    const mixta = { interes: "400", capital: "1000", montoPagado: "1400", fechaVencimiento: "2026-11-15" };
+    expect(deshacerPagos(mixta, ["400", "1000"], "2026-11-10").montoPagado.toString()).toBe("0");
+    expect(deshacerPagos(mixta, ["300", "100", "1000"], "2026-11-10").estado).toBe("PENDIENTE");
+  });
+
+  it("no aplica a cuotas marcadas con «pagadas hasta» (sin movimientos)", () => {
+    expect(() => deshacerPagos(pagada, [], "2026-11-10")).toThrow();
+  });
+
+  it("rechaza movimientos que suman más de lo pagado", () => {
+    expect(() => deshacerPagos(pagada, ["500"], "2026-11-10")).toThrow();
   });
 });

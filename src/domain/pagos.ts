@@ -85,3 +85,22 @@ export function capitalPendiente(
   const pagado = cuotas.reduce((s, c) => s.add(capitalPagadoCuota(c)), CERO);
   return Decimal.max(CERO, new Decimal(capital).sub(pagado));
 }
+
+/**
+ * Deshace los pagos registrados en la app para una cuota: resta lo que suman
+ * sus movimientos vinculados y recalcula el estado según hoy. Lo marcado con
+ * "pagadas hasta" no tiene movimientos, así que no se puede deshacer.
+ */
+export function deshacerPagos(
+  c: CuotaPagable,
+  montosMovimientos: Decimal.Value[],
+  hoy: Fecha,
+): { montoPagado: Decimal; estado: EstadoCuota } {
+  if (montosMovimientos.length === 0) {
+    throw new Error("Esta cuota no tiene pagos registrados en la app para deshacer");
+  }
+  const registrado = montosMovimientos.reduce<Decimal>((s, m) => s.add(m), CERO);
+  const montoPagado = new Decimal(c.montoPagado).sub(registrado);
+  if (montoPagado.isNeg()) throw new Error("Los movimientos suman más de lo pagado en la cuota");
+  return { montoPagado, estado: estadoCuota({ ...c, montoPagado }, hoy) };
+}
