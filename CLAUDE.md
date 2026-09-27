@@ -53,6 +53,7 @@ Next.js (App Router) + TypeScript estricto · Prisma + PostgreSQL · Tailwind + 
 ## Notas técnicas
 
 - Next.js 16: la protección de rutas va en `src/proxy.ts` (antes `middleware.ts`). Además, cada página y server action llama a `requireSession()` (`src/server/sesion.ts`).
+- Auth.js arma las URLs con `AUTH_URL`; `src/auth.ts` la fija desde `src/lib/url-publica.ts` (AUTH_URL → `RAILWAY_PUBLIC_DOMAIN`) porque detrás de Railway el `host` es interno. No construir URLs absolutas con el host del request: usar redirecciones relativas.
 - Prisma 7: la URL de la base va en `prisma.config.ts`; el cliente se genera en `src/generated/prisma` y se usa con `@prisma/adapter-pg` (`src/server/db.ts`).
 - El dominio (`src/domain/`) trabaja con fechas `YYYY-MM-DD` sin zona horaria; "hoy" en ART sale de `src/lib/hoy.ts`.
 - Componentes shadcn/ui en `src/components/ui/` (`components.json` listo para el CLI).

@@ -24,8 +24,20 @@ El cron diario se suma en el bloque (d) de la Fase 1.
 | `AUTH_GOOGLE_SECRET` | Client secret de Google OAuth |
 | `ALLOWED_EMAIL` | El único email que puede entrar |
 | `TZ` | `America/Argentina/Buenos_Aires` |
+| `AUTH_URL` | *Opcional.* Solo si usás un dominio propio: `https://tu-dominio.com` |
 
-No hace falta `AUTH_URL`: la app confía en el host del request (`trustHost`).
+`RAILWAY_PUBLIC_DOMAIN` la define Railway sola cuando el servicio tiene dominio público; no hace falta cargarla.
+
+No hacen falta `AUTH_TRUST_HOST` (la config de Auth.js ya tiene `trustHost: true`) ni `NEXTAUTH_URL`. Si las cargaste a mano como parche, podés borrarlas; `AUTH_URL` también, salvo que uses un dominio propio.
+
+### Por qué importa la URL pública
+
+Detrás del proxy de Railway, el header `host` que llega a la app es el interno (`localhost:8080`). Si Auth.js armara las URLs con ese host, el login con Google, el logout y la redirección a `/login` mandarían al navegador a `localhost:8080`. Por eso `src/auth.ts` fija la URL pública antes de inicializar Auth.js (`src/lib/url-publica.ts`), en este orden:
+
+1. `AUTH_URL` (o `NEXTAUTH_URL`), si está configurada;
+2. `https://${RAILWAY_PUBLIC_DOMAIN}`.
+
+Si no hay ninguna de las dos en producción, la app lo avisa en los logs al arrancar.
 
 ## 3. Google OAuth
 
@@ -33,6 +45,8 @@ En Google Cloud Console → *APIs y servicios* → *Credenciales* → *Crear cre
 
 - **Orígenes de JavaScript autorizados**: `https://<tu-dominio>`
 - **URI de redireccionamiento autorizados**: `https://<tu-dominio>/api/auth/callback/google`
+
+`<tu-dominio>` es el dominio público de Railway (el mismo valor que `RAILWAY_PUBLIC_DOMAIN`) o tu dominio propio si configuraste `AUTH_URL`. Tiene que coincidir exacto, con `https` y sin barra final.
 
 Para desarrollo local, agregá también `http://localhost:3000` y `http://localhost:3000/api/auth/callback/google`.
 
