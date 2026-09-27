@@ -30,7 +30,7 @@ Next.js (App Router) + TypeScript estricto · Prisma + PostgreSQL · Tailwind + 
 6. **Seguridad:** toda ruta y toda server action verifican sesión + `ALLOWED_EMAIL`. Nunca loguear montos.
 7. **Mobile-first:** diseñar para 390 px de ancho. La carga rápida debe resolverse en 4 taps más el monto.
 8. **Copy de la UI:** español rioplatense con voseo ("Cargá", "Tu patrimonio", "¿Confirmás?"). Formato de números es-AR (1.234.567,89). Mostrar siempre la moneda (ARS / USD).
-9. **Borrado:** activos, pasivos, cuentas y categorías se archivan, no se borran. Excepción: un pasivo o una cuenta sin movimientos (cargado por error) se puede eliminar (`domain/borrado.ts`). Un pago registrado desde la app se puede deshacer. Los movimientos de meses cerrados no se editan sin reabrir el cierre.
+9. **Borrado:** activos, pasivos, cuentas y categorías se archivan, no se borran. Excepción: un activo, pasivo o cuenta sin movimientos (cargado por error) se puede eliminar (`domain/borrado.ts`). Un pago o cobro registrado desde la app se puede deshacer, y editar o borrar un movimiento recalcula su cuota. Los movimientos de meses cerrados no se editan sin reabrir el cierre.
 
 ## Forma de trabajo
 
@@ -54,6 +54,7 @@ Next.js (App Router) + TypeScript estricto · Prisma + PostgreSQL · Tailwind + 
 
 - Next.js 16: la protección de rutas va en `src/proxy.ts` (antes `middleware.ts`). Además, cada página y server action llama a `requireSession()` (`src/server/sesion.ts`).
 - Auth.js arma las URLs con `AUTH_URL`; `src/auth.ts` la fija desde `src/lib/url-publica.ts` (AUTH_URL → `RAILWAY_PUBLIC_DOMAIN`) porque detrás de Railway el `host` es interno. No construir URLs absolutas con el host del request: usar redirecciones relativas.
+- Todo alta, edición o borrado de movimientos pasa por `src/server/movimientos.ts` (valida SPEC §4, aplica pagos a cuotas y recalcula estados). El TC se obtiene antes de abrir la transacción (`tcObligatorio`).
 - Prisma 7: la URL de la base va en `prisma.config.ts`; el cliente se genera en `src/generated/prisma` y se usa con `@prisma/adapter-pg` (`src/server/db.ts`).
 - El dominio (`src/domain/`) trabaja con fechas `YYYY-MM-DD` sin zona horaria; "hoy" en ART sale de `src/lib/hoy.ts`.
 - Componentes shadcn/ui en `src/components/ui/` (`components.json` listo para el CLI).
