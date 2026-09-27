@@ -66,6 +66,28 @@ export const ESTADOS_PASIVO = {
   ARCHIVADO: "Archivado",
 } as const;
 
+export const ESTADOS_ACTIVO = {
+  ACTIVO: "Activo",
+  CERRADO: "Cerrado",
+  EN_MORA: "En mora",
+  INCOBRABLE: "Incobrable",
+  ARCHIVADO: "Archivado",
+} as const;
+
+export const TIPOS_MOVIMIENTO = {
+  INGRESO: "Ingreso",
+  GASTO: "Gasto",
+  TRANSFERENCIA: "Transferencia",
+  APLICACION_ACTIVO: "Aplicación a activo",
+  COBRO_RENDIMIENTO: "Cobro de rendimiento",
+  COBRO_CAPITAL: "Cobro de capital",
+  TOMA_PASIVO: "Ingreso de capital de pasivo",
+  PAGO_INTERES: "Pago de interés",
+  PAGO_CAPITAL: "Devolución de capital",
+  BAJA_INCOBRABLE: "Baja por incobrable",
+  AJUSTE: "Ajuste de saldo",
+} as const;
+
 export const MONEDAS = ["ARS", "USD"] as const;
 
 const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];

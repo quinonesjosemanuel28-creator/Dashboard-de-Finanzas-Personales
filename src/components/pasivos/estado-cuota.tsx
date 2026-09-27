@@ -4,6 +4,6 @@ import { ESTADOS_CUOTA } from "@/lib/etiquetas";
 
 const VARIANTE = { PENDIENTE: "outline", PARCIAL: "aviso", PAGADA: "positivo", VENCIDA: "negativo" } as const;
 
-export function BadgeEstadoCuota({ estado }: { estado: EstadoCuota }) {
-  return <Badge variant={VARIANTE[estado]}>{ESTADOS_CUOTA[estado]}</Badge>;
+export function BadgeEstadoCuota({ estado, textoPagada }: { estado: EstadoCuota; textoPagada?: string }) {
+  return <Badge variant={VARIANTE[estado]}>{estado === "PAGADA" && textoPagada ? textoPagada : ESTADOS_CUOTA[estado]}</Badge>;
 }
