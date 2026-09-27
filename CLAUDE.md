@@ -30,7 +30,7 @@ Next.js (App Router) + TypeScript estricto · Prisma + PostgreSQL · Tailwind + 
 6. **Seguridad:** toda ruta y toda server action verifican sesión + `ALLOWED_EMAIL`. Nunca loguear montos.
 7. **Mobile-first:** diseñar para 390 px de ancho. La carga rápida debe resolverse en 4 taps más el monto.
 8. **Copy de la UI:** español rioplatense con voseo ("Cargá", "Tu patrimonio", "¿Confirmás?"). Formato de números es-AR (1.234.567,89). Mostrar siempre la moneda (ARS / USD).
-9. **Borrado:** activos, pasivos, cuentas y categorías se archivan, no se borran. Los movimientos de meses cerrados no se editan sin reabrir el cierre.
+9. **Borrado:** activos, pasivos, cuentas y categorías se archivan, no se borran. Excepción: un pasivo o una cuenta sin movimientos (cargado por error) se puede eliminar (`domain/borrado.ts`). Un pago registrado desde la app se puede deshacer. Los movimientos de meses cerrados no se editan sin reabrir el cierre.
 
 ## Forma de trabajo
 

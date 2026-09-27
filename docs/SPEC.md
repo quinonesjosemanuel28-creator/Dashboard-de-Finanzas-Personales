@@ -32,7 +32,7 @@
 4. **Moneda original + conversión.** Cada movimiento se guarda en su moneda original con el tipo de cambio del día. Los reportes se pueden ver en ARS o en USD.
 5. **Tasas siempre mensuales.** Se guardan como tasa mensual simple (0.04 = 4%). La TNA (×12) y la TEA son solo de visualización.
 6. **Lógica de dominio pura y testeada.** Cronogramas, fechas de pago, estado de resultados, balance y spread viven en funciones puras con tests.
-7. **Nada se borra en duro si tiene historia.** Activos, pasivos y cuentas se archivan. Los movimientos sí se pueden borrar o editar mientras el mes no esté cerrado.
+7. **Nada se borra en duro si tiene historia.** Activos, pasivos y cuentas con movimientos se archivan. Un pasivo o una cuenta **sin movimientos** (cargado por error) se puede eliminar, con confirmación. Los movimientos sí se pueden borrar o editar mientras el mes no esté cerrado.
 8. **Todo el copy de la UI en español rioplatense (voseo).**
 
 ---
@@ -476,6 +476,7 @@ model Configuracion {
 - `fechaVencimiento` (pasivos) y `fechaFin` (activos `RENTA_PROGRAMADA`) tienen que ser posteriores a la anteúltima fecha de pago del cronograma.
 - La suma de fondeos vigentes de un pasivo no puede superar su capital pendiente.
 - No se pueden crear, editar ni borrar movimientos con fecha dentro de un período cerrado sin reabrir el cierre (acción explícita con confirmación).
+- **Eliminar vs. archivar**: un pasivo se puede eliminar solo si no tiene movimientos vinculados (directos o a través de sus cuotas) ni fondeos; se borra con su cronograma. Una cuenta, solo si no tiene movimientos (como origen o destino). En cualquier otro caso se archiva. Las cuotas marcadas con "pagadas hasta" no cuentan como movimientos. Lógica en `domain/borrado.ts`.
 
 ---
 
@@ -530,6 +531,7 @@ Todo lo anterior aplica igual a los activos `RENTA_PROGRAMADA` (`fechaFin` hace 
 - Pago parcial deja la cuota en `PARCIAL`; pago total, en `PAGADA`.
 - En pasivos con cuota vencida, se muestra el **punitorio estimado** = `interesImpago × punitorioMensual × díasDeAtraso / 30`. El punitorio corre desde el día siguiente a la fecha de pago (ese día es el día 1 de atraso). Lo pagado de una cuota se aplica primero al interés. Si se paga, se registra como `GASTO` con categoría "Punitorios" (grupo `COSTO_FINANCIERO_OTRO`).
 - Registrar el pago o cobro desde la cuota crea el `Movimiento` vinculado con un solo tap, prellenado con el monto pendiente, la cuenta por defecto de esa moneda y la fecha de hoy.
+- **Deshacer pago**: en una cuota con pagos registrados desde la app, borra sus movimientos vinculados (interés y capital, y todos los pagos parciales), resta esos montos de `montoPagado` y recalcula el estado según hoy (`PENDIENTE`, `PARCIAL` o `VENCIDA`). Pide confirmación. Si el pasivo estaba `CANCELADO`, vuelve a `VIGENTE`. No aplica a las cuotas marcadas con "pagadas hasta", que no tienen movimientos. Cuando exista el cierre mensual (Fase 2), no se podrá deshacer un pago de un mes cerrado sin reabrirlo.
 
 ### 5.5 Preaviso de retiro
 - Se registra `fechaPreaviso` y `montoPreaviso`, y el pasivo pasa a `EN_PREAVISO`.
