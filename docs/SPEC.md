@@ -486,6 +486,7 @@ model Configuracion {
 - Histórico para la carga inicial: ArgentinaDatos (verificar el endpoint de cotizaciones históricas del dólar oficial).
 - Si no hay TC para una fecha (fin de semana o feriado), se usa el último TC disponible anterior a esa fecha.
 - Se permite override manual (queda `manual = true`).
+- Si al registrar un movimiento con fecha de hoy todavía no hay TC de hoy, se consulta dolarapi en ese momento (además del cron diario).
 - Conversión: `USD = ARS / TC` y `ARS = USD × TC`.
 - Si el último TC tiene más de 4 días corridos sin actualizar, el dashboard muestra una alerta.
 
@@ -766,7 +767,7 @@ Primer uso, en este orden:
 3. activos vigentes;
 4. fondeos.
 
-Permite ingresar un mutuo con fecha de inicio pasada y marcar en bloque "cuotas pagadas hasta YYYY-MM".
+Permite ingresar un mutuo con fecha de inicio pasada y marcar en bloque "cuotas pagadas hasta YYYY-MM". Las cuotas marcadas así quedan `PAGADA` **sin generar movimientos**, porque los saldos iniciales de las cuentas ya reflejan esos pagos. En un mutuo en curso tampoco se registra la entrada del capital.
 
 ---
 
