@@ -7,3 +7,4 @@ src/generated/
 .env*.local
 *.tsbuildinfo
 .DS_Store
+next-env.d.ts
