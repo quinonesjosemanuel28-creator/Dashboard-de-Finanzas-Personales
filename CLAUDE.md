@@ -25,8 +25,8 @@ Next.js (App Router) + TypeScript estricto · Prisma + PostgreSQL · Tailwind + 
 1. **Dinero:** nunca `number` ni `float`. Montos en `Decimal(18,2)`, tasas en `Decimal(9,6)`, TC en `Decimal(12,4)`. Operar con `Prisma.Decimal` / decimal.js.
 2. **Tasas:** se guardan como tasa mensual simple (0.04 = 4%). TNA y TEA son solo de visualización.
 3. **Moneda:** cada movimiento guarda su moneda original y el TC oficial venta del día. Conversión: USD = ARS / TC.
-4. **Lógica de dominio** (cronogramas, días hábiles, ER, balance, flujo, spread, KPIs, meta): funciones puras en `src/domain/`, sin acceso a DB, con tests en Vitest. La UI y las server actions solo orquestan.
-5. **ER:** las cuotas se imputan por devengado según `periodo`; el resto de los movimientos, por fecha. Un movimiento vinculado a una cuota no se suma de nuevo. Ver SPEC §6.1.
+4. **Lógica de dominio** (cronogramas, fechas de pago, ER, balance, flujo, spread, KPIs, meta): funciones puras en `src/domain/`, sin acceso a DB, con tests en Vitest. La UI y las server actions solo orquestan.
+5. **ER:** las cuotas se imputan por devengado mensual (cada cuota reparte su interés en partes iguales entre los meses que cubre); el resto de los movimientos, por fecha. Un movimiento vinculado a una cuota no se suma de nuevo. Ver SPEC §6.1.
 6. **Seguridad:** toda ruta y toda server action verifican sesión + `ALLOWED_EMAIL`. Nunca loguear montos.
 7. **Mobile-first:** diseñar para 390 px de ancho. La carga rápida debe resolverse en 4 taps más el monto.
 8. **Copy de la UI:** español rioplatense con voseo ("Cargá", "Tu patrimonio", "¿Confirmás?"). Formato de números es-AR (1.234.567,89). Mostrar siempre la moneda (ARS / USD).
@@ -40,14 +40,26 @@ Next.js (App Router) + TypeScript estricto · Prisma + PostgreSQL · Tailwind + 
 - Si algo de SPEC §12 (decisiones abiertas) bloquea la tarea, preguntar; no asumir.
 - Commits pequeños y descriptivos, en español.
 
-## Comandos (completar al hacer el scaffold)
+## Comandos
 
-- `npm run dev` — desarrollo
+- `npm run dev` — desarrollo (necesita `.env`; ver `.env.example`)
 - `npm run test` — Vitest
+- `npm run typecheck` · `npm run lint`
+- `npm run build` — `prisma generate` + `next build`
 - `npx prisma migrate dev` — migraciones
-- `npx prisma db seed` — seed (categorías, tipos de activo, feriados)
+- `npx prisma db seed` — seed (categorías, tipos de activo y configuración; idempotente)
+- Deploy en Railway: ver `docs/DEPLOY.md`.
+
+## Notas técnicas
+
+- Next.js 16: la protección de rutas va en `src/proxy.ts` (antes `middleware.ts`). Además, cada página y server action llama a `requireSession()` (`src/server/sesion.ts`).
+- Prisma 7: la URL de la base va en `prisma.config.ts`; el cliente se genera en `src/generated/prisma` y se usa con `@prisma/adapter-pg` (`src/server/db.ts`).
+- El dominio (`src/domain/`) trabaja con fechas `YYYY-MM-DD` sin zona horaria; "hoy" en ART sale de `src/lib/hoy.ts`.
+- Componentes shadcn/ui en `src/components/ui/` (`components.json` listo para el CLI).
+- No importar constantes desde módulos `"use client"` en componentes de servidor: llegan como referencias de cliente. Ponerlas en `src/lib/`.
 
 ## Integraciones externas
 
 - TC oficial diario: `GET https://dolarapi.com/v1/dolares/oficial`, usando el campo `venta`.
-- Histórico de TC y feriados: ArgentinaDatos (verificar endpoints antes de usarlos).
+- Histórico de TC: ArgentinaDatos, `GET https://api.argentinadatos.com/v1/cotizaciones/dolares/oficial` (verificado; campos `fecha`, `compra`, `venta`).
+- Fechas de pago por aniversario (SPEC §5.2): no se usan días hábiles ni feriados.

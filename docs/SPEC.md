@@ -2,7 +2,7 @@
 
 > App web personal (PWA instalable en el celular) para gestionar las finanzas personales de José: activos productivos, pasivos con inversores, movimientos del mes, estado de resultados, flujo de caja, balance y evolución del patrimonio neto.
 >
-> Versión 1.0 — 27/09/2026
+> Versión 1.1 — 27/09/2026 (fechas de pago por aniversario y frecuencia de pago de la rentabilidad)
 
 ---
 
@@ -31,7 +31,7 @@
 3. **Dinero exacto.** Nunca `float`. Todo monto es `Decimal(18,2)` y toda tasa `Decimal(9,6)`.
 4. **Moneda original + conversión.** Cada movimiento se guarda en su moneda original con el tipo de cambio del día. Los reportes se pueden ver en ARS o en USD.
 5. **Tasas siempre mensuales.** Se guardan como tasa mensual simple (0.04 = 4%). La TNA (×12) y la TEA son solo de visualización.
-6. **Lógica de dominio pura y testeada.** Cronogramas, estado de resultados, balance, spread y días hábiles viven en funciones puras con tests.
+6. **Lógica de dominio pura y testeada.** Cronogramas, fechas de pago, estado de resultados, balance y spread viven en funciones puras con tests.
 7. **Nada se borra en duro si tiene historia.** Activos, pasivos y cuentas se archivan. Los movimientos sí se pueden borrar o editar mientras el mes no esté cerrado.
 8. **Todo el copy de la UI en español rioplatense (voseo).**
 
@@ -78,8 +78,9 @@ src/
       config/
     api/cron/              # endpoints invocados por el cron (protegidos por secret)
   domain/                  # lógica pura, sin I/O, 100% testeada
+    fechas.ts
     cronograma.ts
-    diasHabiles.ts
+    cuotas.ts
     fx.ts
     estadoResultados.ts
     flujoCaja.ts
@@ -107,76 +108,148 @@ src/
 - **Cuenta**: donde está la plata líquida (efectivo, banco, billetera virtual, broker). Tiene una sola moneda.
 - **Activo productivo**: capital aplicado a algo que genera rendimiento. Cada activo pertenece a un **Tipo de activo**, definido por el usuario, y cada tipo tiene un **Comportamiento** que define cómo se registra y valúa.
 - **Pasivo**: deuda de José. El caso principal es el mutuo con inversor.
-- **Cuota**: línea de un cronograma (de cobro en activos, de pago en pasivos). Tiene un **período de devengamiento** (`YYYY-MM`) y una fecha de vencimiento.
+- **Cuota**: línea de un cronograma (de cobro en activos, de pago en pasivos). Tiene una **fecha de pago** (fecha aniversario), los **meses que cubre** y el primer mes que devenga (`periodoDesde`, `YYYY-MM`).
+- **Fecha aniversario**: el mismo día del mes que la fecha de inicio (`diaPago`). Ver §5.2.
 - **Fondeo**: asignación de capital de un pasivo a un activo ("los USD 10.000 de Óscar están en la cartera de celulares"). Es la base del cálculo de spread.
 - **Movimiento**: todo hecho con impacto en caja o en patrimonio.
 - **Cierre mensual**: foto inmutable del mes (saldos, TC, estados).
 
 ---
 
-## 4. Modelo de datos (Prisma, borrador)
+## 4. Modelo de datos (Prisma)
+
+> Copia de `prisma/schema.prisma`. Si cambia el esquema, se actualiza este bloque.
 
 ```prisma
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
 }
 
+// La URL de conexión se configura en prisma.config.ts (DATABASE_URL).
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
-enum Moneda { ARS USD }
+enum Moneda {
+  ARS
+  USD
+}
 
-enum TipoCuenta { EFECTIVO BANCO BILLETERA_VIRTUAL BROKER OTRO }
+enum TipoCuenta {
+  EFECTIVO
+  BANCO
+  BILLETERA_VIRTUAL
+  BROKER
+  OTRO
+}
 
 enum Comportamiento {
-  RENTA_PROGRAMADA   // préstamo individual con cronograma (ej. apalancamiento a terceros al 8%)
-  CARTERA            // cartera agregada (préstamos personales, celulares): se registra ganancia mensual y capital en calle
-  COMPRAVENTA        // operación de compra y reventa (ej. vehículos): margen por operación
-  TENENCIA           // bien o inversión que se valúa (inmueble, auto propio, acciones, cripto, participación)
+  RENTA_PROGRAMADA // préstamo individual con cronograma (ej. apalancamiento a terceros al 8%)
+  CARTERA // cartera agregada (préstamos personales, celulares): se registra ganancia mensual y capital en calle
+  COMPRAVENTA // operación de compra y reventa (ej. vehículos): margen por operación
+  TENENCIA // bien o inversión que se valúa (inmueble, auto propio, acciones, cripto, participación)
 }
 
 enum EsquemaCronograma {
-  INTERES_MENSUAL_CAPITAL_AL_VENCIMIENTO  // estándar de los mutuos de José
-  CUOTAS_IGUALES_INTERES_DIRECTO          // cuota = (capital × (1 + tasa × n)) / n
+  INTERES_MENSUAL_CAPITAL_AL_VENCIMIENTO // estándar de los mutuos de José
+  CUOTAS_IGUALES_INTERES_DIRECTO // cuota = (capital × (1 + tasa × n)) / n
 }
 
-enum EstadoActivo { ACTIVO CERRADO EN_MORA INCOBRABLE ARCHIVADO }
-enum TipoPasivo { MUTUO_INVERSOR PRESTAMO TARJETA OTRO }
-enum Instrumentacion { PERSONAL SOCIEDAD }
-enum EstadoRegularizacion { NO_APLICA PENDIENTE REGULARIZADO }
-enum EstadoPasivo { VIGENTE EN_PREAVISO CANCELADO ARCHIVADO }
-enum EstadoCuota { PENDIENTE PARCIAL PAGADA VENCIDA }
-enum TipoContraparte { INVERSOR DEUDOR AMBOS OTRO }
-enum TipoCategoria { INGRESO GASTO }
-enum GrupoER { INGRESO_PERSONAL GASTO_FIJO GASTO_VARIABLE COSTO_FINANCIERO_OTRO OTRO }
+// Cada cuántos meses se paga la rentabilidad (interés) de un pasivo o activo RENTA_PROGRAMADA.
+enum FrecuenciaPago {
+  MENSUAL // 1 mes
+  TRIMESTRAL // 3 meses
+  CUATRIMESTRAL // 4 meses
+  SEMESTRAL // 6 meses
+  ANUAL // 12 meses
+}
+
+enum EstadoActivo {
+  ACTIVO
+  CERRADO
+  EN_MORA
+  INCOBRABLE
+  ARCHIVADO
+}
+
+enum TipoPasivo {
+  MUTUO_INVERSOR
+  PRESTAMO
+  TARJETA
+  OTRO
+}
+
+enum Instrumentacion {
+  PERSONAL
+  SOCIEDAD
+}
+
+enum EstadoRegularizacion {
+  NO_APLICA
+  PENDIENTE
+  REGULARIZADO
+}
+
+enum EstadoPasivo {
+  VIGENTE
+  EN_PREAVISO
+  CANCELADO
+  ARCHIVADO
+}
+
+enum EstadoCuota {
+  PENDIENTE
+  PARCIAL
+  PAGADA
+  VENCIDA
+}
+
+enum TipoContraparte {
+  INVERSOR
+  DEUDOR
+  AMBOS
+  OTRO
+}
+
+enum TipoCategoria {
+  INGRESO
+  GASTO
+}
+
+enum GrupoER {
+  INGRESO_PERSONAL
+  GASTO_FIJO
+  GASTO_VARIABLE
+  COSTO_FINANCIERO_OTRO
+  OTRO
+}
 
 enum TipoMovimiento {
-  INGRESO                 // ingreso personal (retiros del holding, honorarios, otros)
-  GASTO                   // gasto personal, o gasto directo de un activo si tiene activoId
-  TRANSFERENCIA           // entre cuentas propias; incluye compra/venta de USD
-  APLICACION_ACTIVO       // sale capital de una cuenta hacia un activo
-  COBRO_RENDIMIENTO       // interés o ganancia cobrada de un activo
-  COBRO_CAPITAL           // recupero de capital de un activo
-  TOMA_PASIVO             // entra capital de un inversor o prestamista
-  PAGO_INTERES            // pago de interés de un pasivo
-  PAGO_CAPITAL            // devolución de capital de un pasivo
-  BAJA_INCOBRABLE         // write-off de capital de un activo (sin cuenta)
-  AJUSTE                  // conciliación de saldo de cuenta
+  INGRESO // ingreso personal (retiros del holding, honorarios, otros)
+  GASTO // gasto personal, o gasto directo de un activo si tiene activoId
+  TRANSFERENCIA // entre cuentas propias; incluye compra/venta de USD
+  APLICACION_ACTIVO // sale capital de una cuenta hacia un activo
+  COBRO_RENDIMIENTO // interés o ganancia cobrada de un activo
+  COBRO_CAPITAL // recupero de capital de un activo
+  TOMA_PASIVO // entra capital de un inversor o prestamista
+  PAGO_INTERES // pago de interés de un pasivo
+  PAGO_CAPITAL // devolución de capital de un pasivo
+  BAJA_INCOBRABLE // write-off de capital de un activo (sin cuenta)
+  AJUSTE // conciliación de saldo de cuenta
 }
 
 model Cuenta {
-  id                String      @id @default(cuid())
+  id                String       @id @default(cuid())
   nombre            String
   tipo              TipoCuenta
   moneda            Moneda
-  saldoInicial      Decimal     @default(0) @db.Decimal(18, 2)
-  fechaSaldoInicial DateTime    @db.Date
-  archivada         Boolean     @default(false)
+  saldoInicial      Decimal      @default(0) @db.Decimal(18, 2)
+  fechaSaldoInicial DateTime     @db.Date
+  archivada         Boolean      @default(false)
   movimientos       Movimiento[] @relation("CuentaOrigen")
   entradas          Movimiento[] @relation("CuentaDestino")
-  createdAt         DateTime    @default(now())
+  createdAt         DateTime     @default(now())
 }
 
 model Contraparte {
@@ -210,11 +283,13 @@ model Activo {
   moneda                     Moneda
   capitalInicial             Decimal            @db.Decimal(18, 2)
   fechaInicio                DateTime           @db.Date
-  fechaFin                   DateTime?          @db.Date
+  fechaFin                   DateTime?          @db.Date // RENTA_PROGRAMADA: fecha de vencimiento del contrato
   // RENTA_PROGRAMADA
   tasaMensual                Decimal?           @db.Decimal(9, 6)
   esquema                    EsquemaCronograma?
   plazoMeses                 Int?
+  diaPago                    Int? // 1–31; por defecto, el día de fechaInicio
+  frecuenciaPago             FrecuenciaPago     @default(MENSUAL)
   // CARTERA / COMPRAVENTA: referencia para comparar real vs esperado
   rendimientoEsperadoMensual Decimal?           @db.Decimal(9, 6)
   // COMPRAVENTA
@@ -237,7 +312,8 @@ model CuotaActivo {
   activoId         String
   activo           Activo       @relation(fields: [activoId], references: [id], onDelete: Cascade)
   numero           Int
-  periodo          String       // "YYYY-MM", mes de devengamiento
+  periodoDesde     String // "YYYY-MM", primer mes que devenga esta cuota
+  mesesCubiertos   Int // meses de interés que cubre (0 = cuota solo de capital)
   fechaVencimiento DateTime     @db.Date
   interes          Decimal      @db.Decimal(18, 2)
   capital          Decimal      @db.Decimal(18, 2)
@@ -245,18 +321,20 @@ model CuotaActivo {
   montoCobrado     Decimal      @default(0) @db.Decimal(18, 2)
   fechaCobro       DateTime?    @db.Date
   movimientos      Movimiento[]
+
   @@unique([activoId, numero])
 }
 
 model RegistroCartera {
-  id              String   @id @default(cuid())
+  id              String  @id @default(cuid())
   activoId        String
-  activo          Activo   @relation(fields: [activoId], references: [id], onDelete: Cascade)
-  periodo         String   // "YYYY-MM"
-  capitalEnCalle  Decimal  @db.Decimal(18, 2)
-  capitalEnMora   Decimal  @default(0) @db.Decimal(18, 2)
+  activo          Activo  @relation(fields: [activoId], references: [id], onDelete: Cascade)
+  periodo         String // "YYYY-MM"
+  capitalEnCalle  Decimal @db.Decimal(18, 2)
+  capitalEnMora   Decimal @default(0) @db.Decimal(18, 2)
   clientesActivos Int?
   notas           String?
+
   @@unique([activoId, periodo])
 }
 
@@ -271,15 +349,15 @@ model Pasivo {
   tasaMensual        Decimal              @db.Decimal(9, 6)
   esquema            EsquemaCronograma    @default(INTERES_MENSUAL_CAPITAL_AL_VENCIMIENTO)
   fechaInicio        DateTime             @db.Date
-  fechaVencimiento   DateTime             @db.Date   // se carga tal cual figura en el contrato
+  fechaVencimiento   DateTime             @db.Date // se carga tal cual figura en el contrato
   plazoMeses         Int
-  prorrateaPrimerMes Boolean              @default(false)
-  diaHabilLimite     Int                  @default(10) // interés: hasta el N-ésimo día hábil del mes siguiente
+  diaPago            Int // 1–31; por defecto, el día de fechaInicio
+  frecuenciaPago     FrecuenciaPago       @default(MENSUAL)
   instrumentacion    Instrumentacion      @default(PERSONAL)
   regularizacion     EstadoRegularizacion @default(NO_APLICA)
-  preavisoDias       Int?                 // 90 en el contrato estándar
-  penalidadRetiroPct Decimal?             @db.Decimal(5, 4)  // 0.30
-  punitorioMensual   Decimal?             @db.Decimal(9, 6)  // 0.02
+  preavisoDias       Int? // 90 en el contrato estándar
+  penalidadRetiroPct Decimal?             @db.Decimal(5, 4) // 0.30
+  punitorioMensual   Decimal?             @db.Decimal(9, 6) // 0.02
   fechaPreaviso      DateTime?            @db.Date
   montoPreaviso      Decimal?             @db.Decimal(18, 2)
   estado             EstadoPasivo         @default(VIGENTE)
@@ -295,7 +373,8 @@ model CuotaPasivo {
   pasivoId         String
   pasivo           Pasivo       @relation(fields: [pasivoId], references: [id], onDelete: Cascade)
   numero           Int
-  periodo          String       // "YYYY-MM", mes de devengamiento
+  periodoDesde     String // "YYYY-MM", primer mes que devenga esta cuota
+  mesesCubiertos   Int // meses de interés que cubre (0 = cuota solo de capital)
   fechaVencimiento DateTime     @db.Date
   interes          Decimal      @db.Decimal(18, 2)
   capital          Decimal      @db.Decimal(18, 2)
@@ -303,6 +382,7 @@ model CuotaPasivo {
   montoPagado      Decimal      @default(0) @db.Decimal(18, 2)
   fechaPago        DateTime?    @db.Date
   movimientos      Movimiento[]
+
   @@unique([pasivoId, numero])
 }
 
@@ -312,7 +392,7 @@ model Fondeo {
   pasivo     Pasivo    @relation(fields: [pasivoId], references: [id])
   activoId   String
   activo     Activo    @relation(fields: [activoId], references: [id])
-  monto      Decimal   @db.Decimal(18, 2)  // en la moneda del pasivo
+  monto      Decimal   @db.Decimal(18, 2) // en la moneda del pasivo
   fechaDesde DateTime  @db.Date
   fechaHasta DateTime? @db.Date
   notas      String?
@@ -325,6 +405,7 @@ model Categoria {
   grupoER     GrupoER
   archivada   Boolean       @default(false)
   movimientos Movimiento[]
+
   @@unique([nombre, tipo])
 }
 
@@ -332,14 +413,14 @@ model Movimiento {
   id              String         @id @default(cuid())
   fecha           DateTime       @db.Date
   tipo            TipoMovimiento
-  monto           Decimal        @db.Decimal(18, 2)   // en la moneda de la cuenta
+  monto           Decimal        @db.Decimal(18, 2) // en la moneda de la cuenta
   moneda          Moneda
-  tipoCambio      Decimal        @db.Decimal(12, 4)   // ARS por USD, oficial venta del día
+  tipoCambio      Decimal        @db.Decimal(12, 4) // ARS por USD, oficial venta del día
   cuentaId        String?
   cuenta          Cuenta?        @relation("CuentaOrigen", fields: [cuentaId], references: [id])
   cuentaDestinoId String?
   cuentaDestino   Cuenta?        @relation("CuentaDestino", fields: [cuentaDestinoId], references: [id])
-  montoDestino    Decimal?       @db.Decimal(18, 2)   // transferencias entre monedas
+  montoDestino    Decimal?       @db.Decimal(18, 2) // transferencias entre monedas
   categoriaId     String?
   categoria       Categoria?     @relation(fields: [categoriaId], references: [id])
   activoId        String?
@@ -353,6 +434,7 @@ model Movimiento {
   descripcion     String?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
+
   @@index([fecha])
   @@index([tipo, fecha])
 }
@@ -361,31 +443,26 @@ model TipoCambio {
   fecha  DateTime @id @db.Date
   compra Decimal  @db.Decimal(12, 4)
   venta  Decimal  @db.Decimal(12, 4)
-  fuente String   // "dolarapi" | "argentinadatos" | "manual"
+  fuente String // "dolarapi" | "argentinadatos" | "manual"
   manual Boolean  @default(false)
 }
 
-model Feriado {
-  fecha  DateTime @id @db.Date
-  nombre String
-}
-
 model CierreMensual {
-  periodo          String   @id   // "YYYY-MM"
+  periodo          String   @id // "YYYY-MM"
   fechaCierre      DateTime @default(now())
   tipoCambioCierre Decimal  @db.Decimal(12, 4)
-  snapshot         Json     // balance, ER, flujo y KPIs congelados
+  snapshot         Json // balance, ER, flujo y KPIs congelados
   notas            String?
 }
 
 model Configuracion {
-  id                     Int       @id @default(1)
-  metaPatrimonioUsd      Decimal?  @db.Decimal(18, 2)
-  fechaMeta              DateTime? @db.Date
-  coberturaMinimaMeses   Decimal   @default(1) @db.Decimal(5, 2)
-  umbralDescalceMonedaPct Decimal  @default(0.20) @db.Decimal(5, 4)
-  costoOportunidadMensual Decimal  @default(0) @db.Decimal(9, 6) // costo del capital propio para el spread
-  monedaReporte          Moneda    @default(USD)
+  id                      Int       @id @default(1)
+  metaPatrimonioUsd       Decimal?  @db.Decimal(18, 2)
+  fechaMeta               DateTime? @db.Date
+  coberturaMinimaMeses    Decimal   @default(1) @db.Decimal(5, 2)
+  umbralDescalceMonedaPct Decimal   @default(0.20) @db.Decimal(5, 4)
+  costoOportunidadMensual Decimal   @default(0) @db.Decimal(9, 6) // costo del capital propio para el spread
+  monedaReporte           Moneda    @default(USD)
 }
 ```
 
@@ -395,6 +472,8 @@ model Configuracion {
 - `APLICACION_ACTIVO`, `COBRO_RENDIMIENTO`, `COBRO_CAPITAL` y `BAJA_INCOBRABLE` exigen `activoId`.
 - `TOMA_PASIVO`, `PAGO_INTERES` y `PAGO_CAPITAL` exigen `pasivoId`.
 - `INGRESO` y `GASTO` exigen `categoriaId`, salvo un `GASTO` con `activoId` (gasto directo del activo).
+- `diaPago` es un entero entre 1 y 31. Por defecto, el día de `fechaInicio`. En `Activo` es obligatorio si el comportamiento es `RENTA_PROGRAMADA`.
+- `fechaVencimiento` (pasivos) y `fechaFin` (activos `RENTA_PROGRAMADA`) tienen que ser posteriores a la anteúltima fecha de pago del cronograma.
 - La suma de fondeos vigentes de un pasivo no puede superar su capital pendiente.
 - No se pueden crear, editar ni borrar movimientos con fecha dentro de un período cerrado sin reabrir el cierre (acción explícita con confirmación).
 
@@ -405,40 +484,57 @@ model Configuracion {
 ### 5.1 Tipo de cambio
 - Fuente diaria: `GET https://dolarapi.com/v1/dolares/oficial` (campos `compra`, `venta`, `fechaActualizacion`). Se usa **venta**.
 - Histórico para la carga inicial: ArgentinaDatos (verificar el endpoint de cotizaciones históricas del dólar oficial).
-- Si no hay TC para una fecha (fin de semana o feriado), se usa el último hábil anterior.
+- Si no hay TC para una fecha (fin de semana o feriado), se usa el último TC disponible anterior a esa fecha.
 - Se permite override manual (queda `manual = true`).
 - Conversión: `USD = ARS / TC` y `ARS = USD × TC`.
-- Si el último TC tiene más de 3 días hábiles, el dashboard muestra una alerta.
+- Si el último TC tiene más de 4 días corridos sin actualizar, el dashboard muestra una alerta.
 
-### 5.2 Días hábiles
-- Lunes a viernes, excluyendo la tabla `Feriado`.
-- Seed de feriados nacionales 2026–2028 (fuente sugerida: ArgentinaDatos). Editable desde Config.
-- `nEsimoDiaHabil(año, mes, n)` es una función pura y testeada.
+### 5.2 Fechas de pago (aniversario)
+- **Pago por aniversario**: el día de pago es el mismo día del mes que la fecha de inicio. **No se mueve por feriados ni por fines de semana.** Los días hábiles no intervienen en ningún cálculo.
+- `diaPago` (1–31) está en `Pasivo` y en `Activo`. Por defecto es el día de `fechaInicio` y se puede editar.
+- Si ese día no existe en el mes (29, 30 o 31), se usa el último día del mes, y al mes siguiente vuelve a `diaPago`. Ejemplo: inicio el 31/01 → 28/02 (o 29/02 en bisiesto) → 31/03 → 30/04.
+- El aniversario mensual número *k* es el `diaPago` del mes `fechaInicio + k`.
+- Funciones puras y testeadas en `domain/cronograma.ts` (`fechaAniversario`, `fechaDePagoEnPeriodo`).
 
 ### 5.3 Cronograma de pasivos (mutuos)
+
+**Frecuencia de pago de la rentabilidad** (`frecuenciaPago`, en `Pasivo` y en `Activo`): `MENSUAL` (1 mes), `TRIMESTRAL` (3), `CUATRIMESTRAL` (4), `SEMESTRAL` (6) o `ANUAL` (12). Por defecto, `MENSUAL`.
+
 Esquema `INTERES_MENSUAL_CAPITAL_AL_VENCIMIENTO`, que es el contrato estándar:
-- Interés mensual simple sobre el capital original: `interes = capital × tasaMensual`. No capitaliza.
-- Períodos por mes calendario, desde el mes de `fechaInicio` durante `plazoMeses` meses.
-- Si `prorrateaPrimerMes`, el primer período prorratea por días corridos: `interes × díasRestantes / díasDelMes`.
-- Fecha de vencimiento de cada cuota de interés: el `diaHabilLimite`-ésimo día hábil del mes siguiente al período (pago por período vencido).
-- El capital se devuelve en un único pago en `fechaVencimiento`, tal como está cargado en el contrato. Va como cuota final con `capital = capital` e `interes = 0`, o sumado a la última cuota de interés si coinciden las fechas.
+- Interés simple sobre el capital original. No capitaliza. **No hay prorrateo.**
+- Las cuotas de interés se pagan cada N meses (N según `frecuenciaPago`) en la fecha aniversario (§5.2): la primera en el aniversario N, la segunda en el 2N, etc.
+- Interés de la cuota = `capital × tasaMensual × meses que cubre`.
+- Si `plazoMeses` no es múltiplo de N, la última cuota cubre los meses restantes.
+- La última cuota de interés se paga en `fechaVencimiento` (normalmente coincide con el aniversario número `plazoMeses`).
+- El capital se devuelve en un único pago en `fechaVencimiento`, tal como está cargado en el contrato. Va como **cuota aparte** con `capital = capital`, `interes = 0` y `mesesCubiertos = 0`, así el pago de interés y la devolución de capital se registran por separado (`PAGO_INTERES` y `PAGO_CAPITAL`).
+- Cada cuota guarda `periodoDesde` (primer mes que devenga) y `mesesCubiertos`, que se usan para el devengado (§6.1).
 - **El cronograma generado es una propuesta**: se muestra en una vista previa antes de guardar, y cada cuota se puede editar a mano para calzar con el contrato real.
 
+Ejemplos (USD 10.000 al 4% mensual desde el 15/10/2026, 24 meses):
+- `MENSUAL`: 24 cuotas de USD 400 los días 15, del 15/11/2026 al 15/10/2028, más el capital el 15/10/2028.
+- `TRIMESTRAL`: 8 cuotas de USD 1.200 (15/01/2027, 15/04/2027, …, 15/10/2028).
+- `ANUAL`: 2 cuotas de USD 4.800 (15/10/2027 y 15/10/2028).
+- Plazo de 10 meses `TRIMESTRAL`: 3 cuotas de 3 meses (USD 1.200) y una última de 1 mes (USD 400) al vencimiento.
+
 Esquema `CUOTAS_IGUALES_INTERES_DIRECTO`:
-- `interesTotal = capital × tasa × n`; cuota = `(capital + interesTotal) / n`, dividida en capital `capital/n` e interés `capital × tasa`.
+- Mismas fechas y frecuencia que el esquema estándar.
+- Cada cuota paga interés `capital × tasa × meses que cubre` y amortiza capital en proporción a esos meses: `capital × meses / plazoMeses`.
+- Con pago mensual equivale a cuota = `(capital + capital × tasa × n) / n`.
 - La última cuota absorbe el redondeo.
 
+Todo lo anterior aplica igual a los activos `RENTA_PROGRAMADA` (`fechaFin` hace de fecha de vencimiento).
+
 ### 5.4 Estados de cuota
-- `PENDIENTE` pasa a `VENCIDA` cuando pasa `fechaVencimiento` sin pago total (lo hace el cron diario).
+- Si una cuota no se pagó completa, pasa a `VENCIDA` **al día siguiente** de su fecha de pago (lo hace el cron diario). El mismo día de pago todavía no está vencida.
 - Pago parcial deja la cuota en `PARCIAL`; pago total, en `PAGADA`.
-- En pasivos con cuota vencida, se muestra el **punitorio estimado** = `interesImpago × punitorioMensual × díasDeAtraso / 30`. Si se paga, se registra como `GASTO` con categoría "Punitorios" (grupo `COSTO_FINANCIERO_OTRO`).
+- En pasivos con cuota vencida, se muestra el **punitorio estimado** = `interesImpago × punitorioMensual × díasDeAtraso / 30`. El punitorio corre desde el día siguiente a la fecha de pago (ese día es el día 1 de atraso). Lo pagado de una cuota se aplica primero al interés. Si se paga, se registra como `GASTO` con categoría "Punitorios" (grupo `COSTO_FINANCIERO_OTRO`).
 - Registrar el pago o cobro desde la cuota crea el `Movimiento` vinculado con un solo tap, prellenado con el monto pendiente, la cuenta por defecto de esa moneda y la fecha de hoy.
 
 ### 5.5 Preaviso de retiro
 - Se registra `fechaPreaviso` y `montoPreaviso`, y el pasivo pasa a `EN_PREAVISO`.
 - `fechaDevolucion = fechaPreaviso + preavisoDias` (días corridos).
 - La penalidad sobre el monto retirado sale de `penalidadRetiroPct`. **Pendiente de confirmar con José a quién afecta** (ver §12).
-- Al confirmar, se genera la cuota de devolución y se recortan las cuotas de interés posteriores. Si el retiro es parcial, se recalculan sobre el capital remanente.
+- Al confirmar, se genera la cuota de devolución y se recortan las cuotas de interés posteriores. Si el retiro es parcial, se recalculan sobre el capital remanente. Si la devolución cae en medio de una cuota de varios meses (pago trimestral, anual, etc.), esa cuota se acorta a los meses efectivamente transcurridos.
 
 ### 5.6 Comportamientos de activos
 
@@ -487,7 +583,9 @@ Tipos de activo del seed (el usuario puede crear más):
 ### 6.1 Estado de resultados mensual
 
 Criterio **mixto y explícito**:
-- Las partidas con cronograma (cuotas de activos `RENTA_PROGRAMADA` y cuotas de pasivos) se imputan por **devengado**, según `periodo`, se hayan pagado o no.
+- Las partidas con cronograma (cuotas de activos `RENTA_PROGRAMADA` y cuotas de pasivos) se imputan por **devengado mensual**, se hayan pagado o no: cada cuota distribuye su interés en partes iguales (`capital × tasaMensual`) en los meses de los aniversarios mensuales que cubre (desde `periodoDesde`, durante `mesesCubiertos` meses). Si la cuota se editó a mano, se reparte su interés en partes iguales y la última absorbe el redondeo.
+  - Ejemplo: inicio el 25/09 con pago trimestral. La cuota del 25/12 imputa un tercio a octubre, uno a noviembre y uno a diciembre.
+  - Con pago mensual, la cuota que se paga el 15/11 devenga en noviembre.
 - Todo lo demás se imputa por **fecha del movimiento**.
 - Un movimiento vinculado a una cuota **no** vuelve a sumar al ER, porque ya lo cuenta la cuota. Así se evita el doble conteo.
 
@@ -518,11 +616,11 @@ Indicadores: tasa de ahorro · cobertura del costo financiero
 (rendimiento neto de activos / costo del capital) · margen financiero / capital fondeado
 ```
 
-- **Conversión**: cada partida se convierte al TC de su fecha (movimientos) o al TC de su fecha de vencimiento (cuotas; si todavía no existe, se usa el último TC).
+- **Conversión**: cada partida se convierte al TC de su fecha (movimientos) o, para el devengado de cuotas, al TC de la fecha aniversario del mes en que devenga (si todavía no existe, se usa el último TC).
 - **Vista comparativa**: últimos 6 o 12 meses en columnas, con variación contra el mes anterior.
 
 ### 6.2 Flujo de caja mensual (percibido)
-Agrupa todos los movimientos del mes por naturaleza:
+Agrupa todos los movimientos del mes por naturaleza. Cada pago o cobro va en el mes en que efectivamente sale o entra la plata (fecha del movimiento), no en el mes en que devenga:
 - **Operativo personal**: ingresos y gastos.
 - **Activos**: aplicaciones, cobros de rendimiento, cobros de capital.
 - **Financiamiento**: tomas de pasivo, pagos de interés, pagos de capital.
@@ -542,6 +640,7 @@ PASIVO
   Otras deudas
 PATRIMONIO NETO = Activo − Pasivo
 ```
+- **Intereses devengados impagos**: interés devengado a la fecha de corte y todavía no pagado. Cada porción mensual de una cuota (§6.1) devenga en la fecha aniversario de su mes. Ejemplo: mutuo trimestral desde el 15/10; al 31/12 hay dos porciones devengadas (15/11 y 15/12) aunque la cuota recién se paga el 15/01. Del lado del activo, lo mismo figura como interés devengado a cobrar de los activos `RENTA_PROGRAMADA`.
 - Todo convertido al TC de la fecha de corte.
 - Posición por moneda: activo USD − pasivo USD, y activo ARS − pasivo ARS.
 
@@ -563,7 +662,7 @@ Este es el cuadro que explica por qué el patrimonio subió o bajó.
 ### 7.1 Tarjetas de Inicio (en orden)
 1. **Patrimonio neto** en la moneda de reporte, con variación contra el cierre anterior y mini-gráfico de 12 meses.
 2. **Alertas** (solo si hay; ver §7.3).
-3. **Próximos 30 días**:
+3. **Próximos vencimientos**: muestra los próximos 30 días y permite pasar a 90 días, porque los pagos trimestrales o anuales pueden caer más lejos.
    - Pagos a inversores (interés y capital) agrupados por fecha.
    - Cobros esperados.
    - Neto.
@@ -577,7 +676,7 @@ Este es el cuadro que explica por qué el patrimonio subió o bajó.
 ### 7.2 Fórmulas
 - **Costo ponderado del capital** (por moneda y total convertido) = Σ(capitalPendiente × tasaMensual) / Σ capitalPendiente.
 - **Rendimiento ponderado de activos** = Σ(valorBalance × rendimientoMensual) / Σ valorBalance, solo sobre activos productivos.
-- **Cobertura de liquidez (meses)** = caja disponible / (intereses a pagar en los próximos 30 días + promedio de gastos fijos de los últimos 3 meses).
+- **Cobertura de liquidez (meses)** = caja disponible / (pagos de interés a inversores que vencen en los próximos 30 días según el cronograma + promedio de gastos fijos de los últimos 3 meses). Se usan los montos reales de las cuotas (una cuota trimestral pesa entera en el mes en que se paga), no el devengado mensual.
 - **Capital ocioso** = Σ capital pendiente de pasivos − Σ fondeos vigentes.
 - **Exposición cambiaria** = Σ fondeos con descalce de moneda. Se acompaña de sensibilidad: "si el oficial sube 10%, tu deuda en USD sube $X en pesos".
 - **Meta**:
@@ -588,14 +687,14 @@ Este es el cuadro que explica por qué el patrimonio subió o bajó.
 | Alerta | Condición |
 |---|---|
 | Pago a inversor próximo | Cuota de pasivo con vencimiento ≤ 7 días |
-| Pago a inversor vencido | Cuota de pasivo `VENCIDA` (incluye punitorio estimado) |
+| Pago a inversor vencido | Cuota de pasivo `VENCIDA`, desde el día siguiente a su fecha de pago (incluye punitorio estimado) |
 | Vencimiento de capital | Capital de pasivo que vence en ≤ 60 días |
 | Preaviso activo | Pasivo `EN_PREAVISO` (días restantes y monto) |
 | Cobro atrasado | Cuota de activo `VENCIDA` |
 | Liquidez baja | Cobertura < `coberturaMinimaMeses` |
 | Descalce de moneda | Exposición cambiaria / capital total > `umbralDescalceMonedaPct` |
 | Spread negativo | Algún activo con rendimiento < costo de fondeo |
-| TC desactualizado | Último TC con más de 3 días hábiles |
+| TC desactualizado | Último TC con más de 4 días corridos sin actualizar |
 | Mes sin cerrar | Estamos después del día 10 y el mes anterior no se cerró |
 
 ---
@@ -634,7 +733,7 @@ Objetivo: **4 taps + monto**.
   - cronograma, con botón "Pagar" por cuota;
   - capital, fondeos (dónde está ese capital) y spread de lo fondeado;
   - acción "Registrar preaviso".
-- Alta en wizard: inversor → condiciones (con defaults del contrato estándar: interés mensual simple, 10º día hábil, preaviso 90 días, penalidad 30%, punitorio 2%) → vista previa editable del cronograma → confirmar.
+- Alta en wizard: inversor → condiciones (con defaults del contrato estándar: interés mensual simple, pago mensual, día de pago = día de inicio, preaviso 90 días, penalidad 30%, punitorio 2%) → vista previa editable del cronograma → confirmar. La fecha de vencimiento se sugiere como el aniversario número `plazoMeses` y se puede editar.
 - Vista **Calendario**: todos los vencimientos de pasivos y activos por mes.
 
 ### 8.4 Movimientos
@@ -655,7 +754,7 @@ Objetivo: **4 taps + monto**.
 6. Resumen y confirmación, que genera un `CierreMensual` con snapshot inmutable.
 
 ### 8.7 Config
-- Cuentas, categorías, tipos de activo, contrapartes y feriados.
+- Cuentas, categorías, tipos de activo y contrapartes.
 - TC manual.
 - Meta patrimonial, umbrales, costo de oportunidad y moneda de reporte.
 - Export completo (CSV por tabla, en ZIP).
@@ -685,16 +784,21 @@ Permite ingresar un mutuo con fecha de inicio pasada y marcar en bloque "cuotas 
 ## 10. Roadmap por fases
 
 ### Fase 1 — Base operativa (MVP)
-Alcance: auth y PWA instalable · Config (cuentas, categorías, tipos de activo, contrapartes, feriados) · Pasivos con cronograma y pagos · Activos (los 4 comportamientos) · Movimientos y carga rápida · TC diario automático · Cron diario · Onboarding · Inicio v1 (PN, caja, próximos 30 días, alertas de vencimientos) · Toggle ocultar montos.
+Alcance: auth y PWA instalable · Config (cuentas, categorías, tipos de activo, contrapartes) · Pasivos con cronograma y pagos · Activos (los 4 comportamientos) · Movimientos y carga rápida · TC diario automático · Cron diario · Onboarding · Inicio v1 (PN, caja, próximos vencimientos a 30/90 días, alertas de vencimientos) · Toggle ocultar montos.
 
 Criterios de aceptación:
-- [ ] Cargar un mutuo de USD 10.000 al 4% mensual a 24 meses, iniciado el 15/10/2026, genera 24 cuotas de interés de USD 400, cada una con vencimiento en el 10º día hábil del mes siguiente (respetando feriados), más la devolución de capital en la fecha cargada.
+- [ ] Cargar un mutuo de USD 10.000 al 4% mensual desde el 15/10/2026, a 24 meses, con pago `MENSUAL`, genera 24 cuotas de USD 400 los días 15, del 15/11/2026 al 15/10/2028, más la devolución de capital en la fecha de vencimiento.
+- [ ] El mismo mutuo con pago `TRIMESTRAL` genera 8 cuotas de USD 1.200 (15/01/2027, 15/04/2027, …, 15/10/2028), y el estado de resultados muestra USD 400 de costo en cada mes, de noviembre 2026 a octubre 2028.
+- [ ] Un mutuo de 10 meses con pago `TRIMESTRAL` genera 3 cuotas de 3 meses más una última de 1 mes al vencimiento.
+- [ ] Un mutuo `ANUAL` de 24 meses genera 2 cuotas de `capital × tasa × 12`.
+- [ ] Casos de fecha: inicio el 31/01 (cuotas el 28/02 o 29/02 y el 31/03), inicio el 29/02 de un año bisiesto, y una cuota que cae domingo y no se mueve.
+- [ ] Una cuota impaga pasa a `VENCIDA` al día siguiente de su fecha de pago, y el punitorio corre desde ese día.
 - [ ] Pagar una cuota desde el detalle del pasivo lleva 2 taps y crea el movimiento vinculado.
 - [ ] Una compraventa comprada a ARS 8.000.000, con gastos de ARS 500.000 y vendida a ARS 10.000.000, muestra una ganancia de ARS 1.500.000, y el balance deja de incluirla.
 - [ ] Una compra de USD con pesos (transferencia entre cuentas de distinta moneda) no afecta el ER.
-- [ ] El TC oficial se actualiza solo cada día hábil; si falla, aparece la alerta.
+- [ ] El TC oficial se actualiza solo todos los días; si pasan más de 4 días corridos sin actualizar, aparece la alerta.
 - [ ] La app se instala en el celular y abre en pantalla completa.
-- [ ] Tests de `domain/cronograma` y `domain/diasHabiles` en verde.
+- [ ] Tests de `domain/cronograma`, `domain/cuotas` y `domain/fechas` en verde.
 
 ### Fase 2 — Estados financieros
 Alcance: ER mensual y comparativo · Flujo de caja · Balance · Conciliación patrimonial · Cierre de mes con snapshot · Bloqueo de períodos cerrados · Export CSV y PDF del ER.
@@ -726,8 +830,6 @@ Alcance: notificaciones de vencimientos (web push en la PWA o bot de Telegram) �
 | `COSTO_FINANCIERO_OTRO` | Intereses de tarjeta · Punitorios · Comisiones bancarias |
 
 **Tipos de activo**: los de §5.6.
-
-**Feriados**: nacionales 2026–2028.
 
 ---
 
