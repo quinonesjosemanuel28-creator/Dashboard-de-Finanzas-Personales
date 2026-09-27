@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
-import { EnConstruccion } from "@/components/en-construccion";
+import { CargaRapida } from "@/components/carga-rapida";
+import { datosCargaRapida } from "@/server/consultas/carga-rapida";
 import { requireSession } from "@/server/sesion";
 
 export const metadata: Metadata = { title: "Cargar" };
 
-export default async function Page() {
+export default async function CargarPage() {
   await requireSession();
-  return <EnConstruccion titulo="Cargar" detalle="Carga rápida: tipo, monto, destino y cuenta, en 4 taps." />;
+  const datos = await datosCargaRapida();
+  return <CargaRapida datos={datos} />;
 }
