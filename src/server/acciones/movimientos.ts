@@ -18,7 +18,8 @@ import {
 import { requireSession } from "@/server/sesion";
 import { type ResultadoAccion, falloValidacion, zFecha } from "@/server/validacion";
 
-const vacioANull = (v: unknown) => (typeof v === "string" && v.trim() === "" ? null : v);
+/** Campo vacío o ausente del formulario → null. */
+const vacioANull = (v: unknown) => (v === undefined || (typeof v === "string" && v.trim() === "") ? null : v);
 const idOpcional = z.preprocess(vacioANull, z.string().nullable());
 
 /** Monto tipeado (es-AR); si `conSigno`, admite negativos (ajustes). */

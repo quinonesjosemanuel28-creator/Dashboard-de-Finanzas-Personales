@@ -15,7 +15,8 @@ import {
   zMontoPositivo,
 } from "@/server/validacion";
 
-const vacioANull = (v: unknown) => (typeof v === "string" && v.trim() === "" ? null : v);
+/** Campo vacío o ausente del formulario → null. */
+const vacioANull = (v: unknown) => (v === undefined || (typeof v === "string" && v.trim() === "") ? null : v);
 const textoOpcional = z.preprocess(vacioANull, z.string().trim().max(500).nullable());
 const nombre = z.string().trim().min(1, "Poné un nombre").max(80);
 

@@ -31,7 +31,8 @@ import {
 } from "@/server/validacion";
 
 const zNoNegativo = zDecimal.refine((v) => !new Decimal(v).isNeg(), "No puede ser negativo");
-const vacioANull = (v: unknown) => (typeof v === "string" && v.trim() === "" ? null : v);
+/** Campo vacío o ausente del formulario → null. */
+const vacioANull = (v: unknown) => (v === undefined || (typeof v === "string" && v.trim() === "") ? null : v);
 
 // ---------------------------------------------------------------- Alta
 
