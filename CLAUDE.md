@@ -40,12 +40,23 @@ Next.js (App Router) + TypeScript estricto · Prisma + PostgreSQL · Tailwind + 
 - Si algo de SPEC §12 (decisiones abiertas) bloquea la tarea, preguntar; no asumir.
 - Commits pequeños y descriptivos, en español.
 
-## Comandos (completar al hacer el scaffold)
+## Comandos
 
-- `npm run dev` — desarrollo
+- `npm run dev` — desarrollo (necesita `.env`; ver `.env.example`)
 - `npm run test` — Vitest
+- `npm run typecheck` · `npm run lint`
+- `npm run build` — `prisma generate` + `next build`
 - `npx prisma migrate dev` — migraciones
-- `npx prisma db seed` — seed (categorías y tipos de activo)
+- `npx prisma db seed` — seed (categorías, tipos de activo y configuración; idempotente)
+- Deploy en Railway: ver `docs/DEPLOY.md`.
+
+## Notas técnicas
+
+- Next.js 16: la protección de rutas va en `src/proxy.ts` (antes `middleware.ts`). Además, cada página y server action llama a `requireSession()` (`src/server/sesion.ts`).
+- Prisma 7: la URL de la base va en `prisma.config.ts`; el cliente se genera en `src/generated/prisma` y se usa con `@prisma/adapter-pg` (`src/server/db.ts`).
+- El dominio (`src/domain/`) trabaja con fechas `YYYY-MM-DD` sin zona horaria; "hoy" en ART sale de `src/lib/hoy.ts`.
+- Componentes shadcn/ui en `src/components/ui/` (`components.json` listo para el CLI).
+- No importar constantes desde módulos `"use client"` en componentes de servidor: llegan como referencias de cliente. Ponerlas en `src/lib/`.
 
 ## Integraciones externas
 
