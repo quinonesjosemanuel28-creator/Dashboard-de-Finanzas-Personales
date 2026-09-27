@@ -40,7 +40,8 @@ export function PagarCuota({
       <SheetTrigger asChild>
         <Button size="sm">Pagar</Button>
       </SheetTrigger>
-      <SheetContent>
+      {/* Sin foco automático: en el celular abriría el teclado y taparía "Confirmar pago". */}
+      <SheetContent onOpenAutoFocus={(e) => e.preventDefault()}>
         <SheetTitle>Pagar cuota {cuota.numero}</SheetTitle>
         <SheetDescription>
           Vence el {formatFechaMedia(cuota.fechaVencimiento)} · Pendiente {formatMonto(cuota.pendiente, moneda)}
