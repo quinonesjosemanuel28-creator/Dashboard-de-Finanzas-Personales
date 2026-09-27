@@ -4,13 +4,19 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { CERO, Decimal } from "@/domain/decimal";
-import { estadoCuota } from "@/domain/cuotas";
 import { evaluarEliminacion } from "@/domain/borrado";
-import { deshacerPagos, marcarPagadasHasta, repartirPago, totalCuota } from "@/domain/pagos";
+import { deshacerPagos, marcarPagadasHasta } from "@/domain/pagos";
 import { hoy } from "@/lib/hoy";
 import { contarMovimientosPasivo } from "@/server/consultas/pasivos";
 import { db } from "@/server/db";
 import { aFechaDb, deFechaDb } from "@/server/fechas-db";
+import {
+  OPCIONES_TX,
+  actualizarEstadoPasivo,
+  mensajeDeError,
+  registrarPagoCuota,
+  tcObligatorio,
+} from "@/server/movimientos";
 import { requireSession } from "@/server/sesion";
 import { obtenerTcVigente } from "@/server/tipo-cambio";
 import {
@@ -179,68 +185,20 @@ export async function pagarCuota(_: ResultadoAccion | null, form: FormData): Pro
   const r = esquemaPago.safeParse(Object.fromEntries(form));
   if (!r.success) return falloValidacion(r.error);
   const { cuotaId, cuentaId, monto, fecha } = r.data;
-  const fechaHoy = hoy();
-  if (fecha > fechaHoy) return { ok: false, error: "La fecha del pago no puede ser futura.", campos: { fecha: "Fecha futura" } };
 
   const cuota = await db.cuotaPasivo.findUnique({ where: { id: cuotaId }, include: { pasivo: true } });
   if (!cuota) return { ok: false, error: "La cuota no existe." };
   if (cuota.pasivo.estado === "ARCHIVADO") return { ok: false, error: "El pasivo está archivado." };
-  const cuenta = await db.cuenta.findUnique({ where: { id: cuentaId } });
-  if (!cuenta || cuenta.archivada) return { ok: false, error: "La cuenta no existe." };
-  if (cuenta.moneda !== cuota.pasivo.moneda) {
-    return { ok: false, error: `La cuenta tiene que ser en ${cuota.pasivo.moneda}.`, campos: { cuentaId: "Moneda distinta" } };
-  }
 
-  const datosCuota = {
-    interes: cuota.interes.toString(),
-    capital: cuota.capital.toString(),
-    montoPagado: cuota.montoPagado.toString(),
-    fechaVencimiento: deFechaDb(cuota.fechaVencimiento),
-  };
-  let partes: { interes: Decimal; capital: Decimal };
   try {
-    partes = repartirPago(datosCuota, monto);
+    const tc = await tcObligatorio(fecha);
+    const resultado = await db.$transaction((tx) => registrarPagoCuota(tx, "pasivo", cuotaId, monto, cuentaId, fecha, tc), OPCIONES_TX);
+    revalidatePath(`/pasivos/${cuota.pasivoId}`);
+    revalidatePath("/pasivos");
+    return { ok: true, mensaje: resultado.estado === "PAGADA" ? "Cuota pagada." : "Pago parcial registrado." };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Monto inválido.", campos: { monto: "Monto inválido" } };
+    return { ok: false, error: mensajeDeError(e, "No se pudo registrar el pago.") };
   }
-
-  const tc = await obtenerTcVigente(fecha);
-  if (!tc) return { ok: false, error: "No hay tipo de cambio para esa fecha. Cargalo en Configuración → Tipo de cambio." };
-
-  const montoPagado = new Decimal(datosCuota.montoPagado).add(monto);
-  const estado = estadoCuota({ ...datosCuota, montoPagado }, fechaHoy);
-  const completa = montoPagado.gte(totalCuota(datosCuota));
-
-  await db.$transaction(async (tx) => {
-    const base = {
-      fecha: aFechaDb(fecha),
-      moneda: cuota.pasivo.moneda,
-      tipoCambio: tc.venta.toFixed(4),
-      cuentaId,
-      pasivoId: cuota.pasivoId,
-      cuotaPasivoId: cuota.id,
-    };
-    if (partes.interes.gt(0)) {
-      await tx.movimiento.create({
-        data: { ...base, tipo: "PAGO_INTERES", monto: partes.interes.toFixed(2), descripcion: `Interés cuota ${cuota.numero} · ${cuota.pasivo.nombre}` },
-      });
-    }
-    if (partes.capital.gt(0)) {
-      await tx.movimiento.create({
-        data: { ...base, tipo: "PAGO_CAPITAL", monto: partes.capital.toFixed(2), descripcion: `Capital cuota ${cuota.numero} · ${cuota.pasivo.nombre}` },
-      });
-    }
-    await tx.cuotaPasivo.update({
-      where: { id: cuota.id },
-      data: { montoPagado: montoPagado.toFixed(2), estado, fechaPago: completa ? aFechaDb(fecha) : cuota.fechaPago },
-    });
-    const impagas = await tx.cuotaPasivo.count({ where: { pasivoId: cuota.pasivoId, estado: { not: "PAGADA" } } });
-    if (impagas === 0) await tx.pasivo.update({ where: { id: cuota.pasivoId }, data: { estado: "CANCELADO" } });
-  });
-
-  revalidatePath(`/pasivos/${cuota.pasivoId}`);
-  revalidatePath("/pasivos");
-  return { ok: true, mensaje: completa ? "Cuota pagada." : "Pago parcial registrado." };
 }
 
 // ---------------------------------------------------------------- Archivar
@@ -293,9 +251,7 @@ export async function deshacerPago(cuotaId: string): Promise<ResultadoAccion> {
         fechaPago: resultado.estado === "PAGADA" ? cuota.fechaPago : null,
       },
     });
-    if (cuota.pasivo.estado === "CANCELADO" && resultado.estado !== "PAGADA") {
-      await tx.pasivo.update({ where: { id: cuota.pasivoId }, data: { estado: "VIGENTE" } });
-    }
+    await actualizarEstadoPasivo(tx, cuota.pasivoId);
   });
 
   revalidatePath(`/pasivos/${cuota.pasivoId}`);
