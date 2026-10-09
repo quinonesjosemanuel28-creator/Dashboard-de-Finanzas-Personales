@@ -7,6 +7,8 @@ const globalParaPrisma = globalThis as unknown as { prisma?: PrismaClient };
 function crearCliente() {
   return new PrismaClient({
     adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+    // Sin marcos de código ni rutas de archivos en los mensajes de error.
+    errorFormat: "minimal",
   });
 }
 
