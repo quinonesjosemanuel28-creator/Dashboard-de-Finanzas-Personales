@@ -7,6 +7,6 @@ export { auth as proxy } from "@/auth";
 
 export const config = {
   matcher: [
-    "/((?!login|api/auth|api/cron|_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|offline.html|icon|apple-icon).*)",
+    "/((?!login|api/auth|api/cron|api/salud|_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|offline.html|icon|apple-icon).*)",
   ],
 };

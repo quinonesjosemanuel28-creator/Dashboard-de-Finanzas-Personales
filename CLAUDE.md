@@ -48,6 +48,7 @@ Next.js (App Router) + TypeScript estricto · Prisma + PostgreSQL · Tailwind + 
 - `npm run build` — `prisma generate` + `next build`
 - `npx prisma migrate dev` — migraciones
 - `npx prisma db seed` — seed (categorías, tipos de activo y configuración; idempotente)
+- Arranque en producción: `sh scripts/start.sh` (migraciones → seed → `next start`; corta si algo falla). Healthcheck: `/api/salud`.
 - Deploy en Railway: ver `docs/DEPLOY.md`.
 
 ## Notas técnicas
@@ -55,6 +56,7 @@ Next.js (App Router) + TypeScript estricto · Prisma + PostgreSQL · Tailwind + 
 - Next.js 16: la protección de rutas va en `src/proxy.ts` (antes `middleware.ts`). Además, cada página y server action llama a `requireSession()` (`src/server/sesion.ts`).
 - Auth.js arma las URLs con `AUTH_URL`; `src/auth.ts` la fija desde `src/lib/url-publica.ts` (AUTH_URL → `RAILWAY_PUBLIC_DOMAIN`) porque detrás de Railway el `host` es interno. No construir URLs absolutas con el host del request: usar redirecciones relativas.
 - Todo alta, edición o borrado de movimientos pasa por `src/server/movimientos.ts` (valida SPEC §4, aplica pagos a cuotas y recalcula estados). El TC se obtiene antes de abrir la transacción (`tcObligatorio`).
+- Logs del servidor: `src/instrumentation.ts` sanea `console.error/warn` (sin montos) y registra cada error con `[error] digest=…`. Para loguear un error, usar `registrarError` de `src/lib/logs.ts`.
 - Prisma 7: la URL de la base va en `prisma.config.ts`; el cliente se genera en `src/generated/prisma` y se usa con `@prisma/adapter-pg` (`src/server/db.ts`).
 - El dominio (`src/domain/`) trabaja con fechas `YYYY-MM-DD` sin zona horaria; "hoy" en ART sale de `src/lib/hoy.ts`.
 - Componentes shadcn/ui en `src/components/ui/` (`components.json` listo para el CLI).
